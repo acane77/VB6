@@ -5,7 +5,7 @@
  */
 const HISTORY = 64;
 export function markTextureDirty(page, rect) {
-  if (!Number.isSafeInteger(page.revision) || page.revision < 0 ||
+  if (!Number.isSafeInteger(page.revision) || page.revision < 0 || page.revision === Number.MAX_SAFE_INTEGER ||
       !Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isInteger) ||
       rect[0] < 0 || rect[1] < 0 || rect[2] <= 0 || rect[3] <= 0 ||
       rect[0] + rect[2] > page.width || rect[1] + rect[3] > page.height) {
