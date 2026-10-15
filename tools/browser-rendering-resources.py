@@ -209,14 +209,14 @@ with sync_playwright() as pw:
         return {'active': detail['active'], 'last': detail['last'], 'pixels': difference}
 
     def native_text_and_print(page):
-        page.evaluate('''()=>{document.body.innerHTML=`<style>body{font:16px monospace;background:white}p{margin:16px;width:max-content}#upper{text-transform:uppercase}#features{font-feature-settings:"liga" 0}#tabs{white-space:pre}</style><p id=upper>uppercase remains native</p><p id=features>office ffi</p><p id=tabs>left\\tright</p>`;}''')
+        page.evaluate('''()=>{document.body.innerHTML=`<style>body{font:16px monospace;background:white}#clip{position:absolute;inset:0;overflow:hidden}p{margin:16px;width:max-content}#upper{text-transform:uppercase}#features{font-feature-settings:"liga" 0}#tabs{white-space:pre}#shadow{position:absolute;left:140px;top:160px;text-shadow:-70px 22px 6px red,30px -10px 2px blue}#offscreen{position:absolute;left:700px;top:300px;text-shadow:-400px 0px 0px black}</style><div id=clip><p id=upper>uppercase remains native</p><p id=features>office ffi</p><p id=tabs>left\\tright</p><p id=shadow>large shadow</p><p id=offscreen>visible shadow</p></div>`;}''')
         page.evaluate('afterFrames()')
         expected = page.screenshot()
         before = page.evaluate('''async()=>{
           const r=window.textRenderer=new VB6Rendering.UIRenderer(document,{backend:requiredBackend,fallbacks:['html'],text:'gpu'});
           await r.ready;await afterFrames();return r.getStats();
         }''')
-        require(before['active'] == BACKEND and before['last']['nativeText'] >= 3 and before['last']['gpuText'] == 0, str(before))
+        require(before['active'] == BACKEND and before['last']['nativeText'] >= 5 and before['last']['gpuText'] == 0, str(before))
         exact('native-text', expected, page.screenshot())
         suspended = page.evaluate('''()=>{
           dispatchEvent(new Event('beforeprint'));const before=textRenderer.metrics.frames;textRenderer.renderNow({force:true});

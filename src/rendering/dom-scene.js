@@ -1,5 +1,5 @@
 import {roundedRadii, preserveRoundedCorners} from './rounded-corners.js';
-import {nativePaintBounds} from './paint-bounds.js';
+import {nativePaintBounds, nativeTextBounds} from './paint-bounds.js';
 import {FONT_STYLE_KEYS, normalizeTextRun} from './text-style.js';
 import {PaintScene, parseColor, splitCSS} from './scene.js';
 import {intersect} from './policy.js';
@@ -110,9 +110,11 @@ export class DOMScene {
       if (paint.transform && paint.transform !== 'none') {
         const m = new this.view.DOMMatrixReadOnly(paint.transform);
         if (!m.is2D || m.b || m.c || m.a <= 0 || m.d <= 0) return [...clip];
-        return nativePaintBounds(r, paint, clip, m.a, m.d);
       }
-      return nativePaintBounds(r, paint, clip);
+      // Border-box ratios include positive scales inherited from ancestors;
+      // the element's own computed transform alone does not include those.
+      const box = this.box(element);
+      return nativePaintBounds(r, paint, clip, box.width ? r[2] / box.width : 1, box.height ? r[3] / box.height : 1);
     };
     let [x, y, w, h] = bounds(node, rect, style), right = x + w, bottom = y + h;
     if (!NATIVE.has(node.tagName.toUpperCase()) && style.contentVisibility !== 'hidden' && (style.overflowX === 'visible' || style.overflowY === 'visible')) {
@@ -293,13 +295,23 @@ export class DOMScene {
   text(node, clip) {
     const style = this.style(node.parentElement); if (style.visibility !== 'visible') return;
     const range = this.range; range.selectNodeContents(node);
-    const rectangles = [...range.getClientRects()].map(rectOf).filter(r => r[2] && r[3] &&
-      r[0] + r[2] + 2 > clip[0] && r[1] + r[3] + 2 > clip[1] &&
-      r[0] - 2 < clip[0] + clip[2] && r[1] - 2 < clip[1] + clip[3]);
+    const shadowed = style.textShadow && style.textShadow !== 'none';
+    let scaleX = 1, scaleY = 1;
+    if (shadowed) {
+      const box = this.box(node.parentElement);
+      scaleX = box.width ? box.rect[2] / box.width : 1; scaleY = box.height ? box.rect[3] / box.height : 1;
+    }
+    const coverage = rect => nativeTextBounds(rect, style, clip, scaleX, scaleY);
+    const rectangles = [...range.getClientRects()].map(rectOf).filter(rect => {
+      if (!rect[2] || !rect[3]) return false;
+      const r = shadowed ? coverage(rect) : rect;
+      return r[0] + r[2] + 2 > clip[0] && r[1] + r[3] + 2 > clip[1] &&
+        r[0] - 2 < clip[0] + clip[2] && r[1] - 2 < clip[1] + clip[3];
+    });
     if (!rectangles.length) return;
     const native = this.policy.text !== 'gpu' || style.textShadow !== 'none' || style.textDecorationLine !== 'none' || style.direction !== 'ltr' || Math.abs((this.box(node.parentElement).rect[2] / (this.box(node.parentElement).width || 1)) - 1) > .01 || (this.selection?.rangeCount && this.selection.containsNode(node, true));
     if (native || rectangles.length !== 1 || style.textOverflow === 'ellipsis' || this.style(node.parentElement).transform !== 'none') {
-      for (const rect of rectangles) this.scene.native([rect[0] - 1, rect[1] - 1, rect[2] + 2, rect[3] + 2], clip, 'native text');
+      for (const rect of rectangles) this.scene.native(coverage(rect), clip, 'native text');
       this.scene.stats.nativeText++; return;
     }
     const rect = rectangles[0], text = normalizeTextRun(node.textContent, style.whiteSpace);
@@ -308,7 +320,7 @@ export class DOMScene {
     // rules can change the DOM advance. Do not cover native glyphs with a run
     // whose measured advance disagrees with the browser layout.
     if (!glyph || (Number.isFinite(glyph.advance) && Math.abs(glyph.advance - rect[2]) > 1 / this.scene.dpr)) {
-      this.scene.native([rect[0] - 1, rect[1] - 1, rect[2] + 2, rect[3] + 2], clip, 'native text style, layout or atlas capacity');
+      this.scene.native(coverage(rect), clip, 'native text style, layout or atlas capacity');
       this.scene.stats.nativeText++; return;
     }
     this.scene.add(glyph.rect, [1, 1, 1, 1], {clip, page: glyph.page, uv: glyph.uv, snap: false}); this.scene.stats.gpuText++;

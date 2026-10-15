@@ -95,7 +95,9 @@ sharp outer shadows and rounded overflow. Native corners are cleared after
 children so a child cannot refill an excluded corner.
 
 Native paint bounds account for multiple shadow offsets, blur, spread and
-outline offsets instead of assuming a four-pixel halo. Unknown filter geometry
+outline offsets instead of assuming a four-pixel halo. Inherited positive scales
+are included, and native text-shadow overflow is retained even when the glyph
+layout rectangle itself lies outside the viewport. Unknown filter geometry
 and rotated/perspective transforms conservatively preserve the enclosing clip.
 The blur bound is intentionally conservative, not a reconstruction of the
 browser's blur kernel.

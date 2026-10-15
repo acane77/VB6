@@ -37,3 +37,12 @@ export function nativePaintBounds(rect, style, clip, scaleX = 1, scaleY = 1) {
   }
   return [left, top, right - left, bottom - top];
 }
+
+/** Text shadows share the offset/blur geometry of box shadows, without spread
+ * or inset. Keep their painted overflow even when the glyph's layout rectangle
+ * itself is outside the clip. No font measurement is needed for native text.
+ * https://www.w3.org/TR/css-text-decor-3/#text-shadow-property
+ */
+export function nativeTextBounds(rect, style, clip, scaleX = 1, scaleY = 1) {
+  return nativePaintBounds(rect, {boxShadow: style.textShadow}, clip, scaleX, scaleY);
+}
