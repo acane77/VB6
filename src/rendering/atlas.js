@@ -1,3 +1,4 @@
+import {canvasTextStyle, applyCanvasTextStyle} from './text-style.js';
 import {markTextureDirty} from './texture-updates.js';
 /** Browser-shaped text runs are rasterized once, then sampled by GPU quads.
  * Pages are bounded and may be reclaimed only before they are used in the
@@ -75,15 +76,17 @@ export class TextAtlas {
   }
   text(text, style, rect, dpr = 1) {
     if (!this.measure || typeof text !== 'string' || !text || !Number.isFinite(dpr) || dpr <= 0 ||
-        !rect?.slice(0, 2).every(Number.isFinite)) return null;
-    const ctx = this.measure, font = style.font || `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        !Array.isArray(rect) || rect.length < 2 || !rect.slice(0, 2).every(Number.isFinite)) return null;
+    const ctx = this.measure, textStyle = canvasTextStyle(style, ctx);
+    if (!textStyle) return null;
+    const font = style.font || `${style.fontStyle || 'normal'} ${style.fontWeight || 'normal'} ${style.fontSize} ${style.fontFamily}`;
     const fx = rect[0] * dpr - Math.floor(rect[0] * dpr), fy = rect[1] * dpr - Math.floor(rect[1] * dpr);
-    const key = JSON.stringify([text, font, style.color, style.direction, style.fontKerning, dpr, fx, fy]);
+    const key = JSON.stringify([text, font, style.color, style.direction, textStyle, dpr, fx, fy]);
     let entry = this.entries.get(key);
     if (entry) this.stats.hits++;
     else {
       this.stats.misses++;
-      ctx.font = font; ctx.fontKerning = style.fontKerning || 'auto'; ctx.direction = style.direction || 'ltr';
+      ctx.font = font; applyCanvasTextStyle(ctx, textStyle); ctx.direction = style.direction || 'ltr';
       ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
       const metrics = ctx.measureText(text); this.stats.measurements++;
       const ascent = metrics.fontBoundingBoxAscent ?? parseFloat(style.fontSize), descent = metrics.fontBoundingBoxDescent ?? parseFloat(style.fontSize) * .25;
@@ -96,14 +99,14 @@ export class TextAtlas {
       try {
         paint.beginPath(); paint.rect(box.x, box.y, width, height); paint.clip();
         paint.translate(box.x + pad + fx + left * dpr, box.y + pad + fy); paint.scale(dpr, dpr);
-        paint.font = font; paint.fontKerning = ctx.fontKerning; paint.direction = ctx.direction;
+        paint.font = font; applyCanvasTextStyle(paint, textStyle); paint.direction = ctx.direction;
         paint.textAlign = 'left'; paint.textBaseline = 'alphabetic'; paint.fillStyle = style.color; paint.fillText(text, 0, ascent);
       } finally { paint.restore(); }
       markTextureDirty(box.page, [box.x, box.y, width, height]);
-      entry = {...box, pad, left, ascent, descent}; this.entries.set(key, entry); box.page.entries.add(key);
+      entry = {...box, pad, left, ascent, descent, advance: metrics.width}; this.entries.set(key, entry); box.page.entries.add(key);
     }
     entry.used = entry.page.used = this.clock;
-    return {page: entry.page, uv: [entry.x / this.size, entry.y / this.size, entry.width / this.size, entry.height / this.size],
+    return {page: entry.page, advance: entry.advance, uv: [entry.x / this.size, entry.y / this.size, entry.width / this.size, entry.height / this.size],
       rect: [(Math.floor(rect[0] * dpr) - entry.pad) / dpr - entry.left,
         (Math.floor(rect[1] * dpr) - entry.pad) / dpr, entry.width / dpr, entry.height / dpr]};
   }
