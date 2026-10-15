@@ -1,3 +1,4 @@
+import {installDOSWorkspace} from '../ide/dos-mode.js';
 import {installFigmaMode} from '../ide/figma-mode.js';
 import {installAdvancedEditor} from '../ide/advanced-editor.js';
 import {installWebBrowser} from '../ide/webbrowser.js';
@@ -26,5 +27,7 @@ if (globalThis.vb6Studio) {
   installStudioRendering(globalThis.vb6Studio);
   installAdvancedEditor(globalThis.vb6Studio);
   installFigmaMode(globalThis.vb6Studio);
+  installDOSWorkspace(globalThis.vb6Studio);
 }
-export {installFigmaMode, installXaml, installStudioRendering, installAutoLayout, VB6Studio, StudioAPI, installMcp};
+
+export {installDOSWorkspace, installFigmaMode, installXaml, installStudioRendering, installAutoLayout, VB6Studio, StudioAPI, installMcp};
