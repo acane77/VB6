@@ -65,6 +65,7 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [Form designer and SSTab editing](DESIGNER-SUPPORT.md): native tab imports,
   atomic property/collection editors, shared control capabilities and explicit boundaries.
 
+- [Optional DOS / TUI workspace](DOS-WORKSPACE.md): shared VB6 cell presentation, palette settings, input ownership and visual-fidelity boundaries.
 - [Optional Figma workspace](figma-workspace.md): real VB6 Assets/Layers/Design,
   reversible workspace profiles, canvas navigation, auto layout and anchoring.
 - [Figma paint publication](figma-presentation.md): retained-renderer transactions,
