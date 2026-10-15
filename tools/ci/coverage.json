@@ -22,6 +22,7 @@
     "tools/browser-native-caption-tests.py",
     "tools/browser-rendering-agent-thread.py",
     "tools/browser-rendering-recovery.py",
+    "tools/browser-rendering-resources.py",
     "tools/browser-rendering-tests.py",
     "tools/browser-sample-exports.py",
     "tools/browser-theme-tests.py",
