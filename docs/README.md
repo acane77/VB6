@@ -82,6 +82,8 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [HTML retention and designer measurements](HTML-RENDERING-PERFORMANCE.md): DOM identity, read-before-write batching and browser validation.
 - [UI rendering backends](RENDERING.md): settings, native islands, lifecycle,
   performance measurement and strict acceptance; [rendering source attribution](RENDERING-SOURCES.md).
+- [Rendering resource contracts](RENDERING-RESOURCES.md): atlas lifetime, partial uploads,
+  rounded paint, text fidelity, suspension and exact browser qualification.
 - [GPU startup and recovery](RENDERING-TROUBLESHOOTING.md): adapter/context failures,
   live diagnostics, saved-policy retry and environment limitations.
 - [IDE themes](IDE-THEMES.md), [application themes](APPLICATION-THEMES.md) and
