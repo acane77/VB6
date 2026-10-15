@@ -231,6 +231,43 @@ with sync_playwright() as pw:
         page.evaluate('textRenderer.dispose()')
         return {'before': before['last'], 'after': after['last'], 'suspended': suspended}
 
+    def failed_frame_retry(page):
+        detail = page.evaluate('''async()=>{
+          const R=VB6Rendering,make=color=>{const s=new R.PaintScene(innerWidth,innerHeight);s.add(s.clip,color);return s.seal()};
+          let current=make([0,0,1,1]);
+          const r=window.retryRenderer=new R.UIRenderer(document,{backend:requiredBackend,fallbacks:['html']},{sceneFactory:()=>current});
+          await r.ready;if(r.backend!==requiredBackend)throw Error('Required backend unavailable');
+          const painter=r.driver,before=painter.stats.frames;
+          current=make([1,0,0,1]);let restore,kind;
+          if(requiredBackend==='webgl2'){
+            const gl=painter.gl,original=gl.bufferSubData;
+            gl.bufferSubData=function(target,offset,data){original.call(this,target,-4,data)};
+            restore=()=>{gl.bufferSubData=original};kind='real WebGL INVALID_VALUE';
+          }else if(requiredBackend==='webgpu'){
+            const queue=painter.device.queue,original=queue.submit;
+            queue.submit=()=>{throw Error('injected synchronous submission failure')};
+            restore=()=>{queue.submit=original};kind='injected synchronous WebGPU submission failure';
+          }else{
+            const context=painter.context,original=context.fillRect;
+            context.fillRect=()=>{throw Error('injected Canvas paint failure')};
+            restore=()=>{context.fillRect=original};kind='injected Canvas paint failure';
+          }
+          let caught;try{r.renderNow()}catch(error){caught=error.message}finally{restore()}
+          if(!caught)throw Error('Failure was swallowed');
+          if(r.retained.scene!==null||r.canvas.style.visibility!=='hidden')throw Error('Unpresented frame was retained');
+          if(painter.stats.frames!==before)throw Error('Failed frame counted as completed');
+          const uploads=painter.stats.instanceUploads||0;
+          r.renderNow();await afterFrames();
+          if(r.driver!==painter)throw Error('Retry changed the required backend');
+          if(requiredBackend!=='canvas2d'&&(painter.stats.instanceUploads||0)<=uploads)throw Error('Retry reused failed instance state');
+          return {active:r.backend,kind,caught,successfulFrames:painter.stats.frames,
+            visibility:r.canvas.style.visibility,retryUploadedInstances:(painter.stats.instanceUploads||0)-uploads};
+        }''')
+        require(detail['active'] == BACKEND and detail['visibility'] == 'visible', str(detail))
+        exact('failed-frame-retry', png(Image.new('RGB', (640, 480), 'red')), page.screenshot())
+        page.evaluate('retryRenderer.dispose()')
+        return detail
+
     def canvas_loss(page):
         detail = page.evaluate('''async()=>{
           document.body.innerHTML='<div style="width:100px;height:100px;background:blue"></div>';
@@ -248,6 +285,7 @@ with sync_playwright() as pw:
     for scale in [1, 1.25, 1.5, 2]:
         case('rounded-paint-exact', rounded_paint, scale)
     case('native-text-and-print', native_text_and_print)
+    case('failed-frame-retry', failed_frame_retry)
     if BACKEND == 'canvas2d':
         case('canvas-context-loss-fallback', canvas_loss)
     browser.close()

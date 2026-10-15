@@ -67,6 +67,19 @@ export class WebGLPainter {
     return record.texture;
   }
   render(scene) {
+    if (this.disposed || this.gl.isContextLost()) throw new Error('WebGL2 context lost');
+    try { return this.renderFrame(scene); }
+    catch (error) {
+      // WebGL reports allocation/upload errors through getError(), not throws.
+      // A failed frame must not publish its CPU data or resource cursors as a
+      // successful GPU cache: a later retry must allocate and upload again.
+      // https://registry.khronos.org/webgl/specs/latest/1.0/#5.14.9
+      this.data = this.encodedData = this.encodedScene = null;
+      for (const record of this.textures.values()) record.revision = -1;
+      throw error;
+    }
+  }
+  renderFrame(scene) {
     const {groups, pages: usedPages} = prepareBatches(this, scene);
     for (const [page, record] of this.textures) if (!usedPages.has(page)) { this.gl.deleteTexture(record.texture); this.textures.delete(page); }
     const gl = this.gl; if (this.disposed || gl.isContextLost()) throw new Error('WebGL2 context lost');

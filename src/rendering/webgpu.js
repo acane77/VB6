@@ -108,8 +108,21 @@ export class WebGPUPainter {
     }
     return record.group;
   }
-  render(scene, {readback = false, timing = null} = {}) {
+  render(scene, options = {}) {
     if (this.disposed) throw new Error('Renderer disposed');
+    try { return this.renderFrame(scene, options); }
+    catch (error) {
+      // Synchronous encoding/submission failures invalidate cached uploads.
+      // Asynchronous validation/device loss still uses the onLost fallback;
+      // normal rendering never waits for the queue or polls GPU completion.
+      this.buffer?.destroy(); this.buffer = null;
+      this.data = this.encodedData = this.encodedScene = null;
+      this.screenUploaded = false;
+      for (const record of this.textures.values()) record.revision = -1;
+      throw error;
+    }
+  }
+  renderFrame(scene, {readback = false, timing = null} = {}) {
     const {groups, pages: usedPages} = prepareBatches(this, scene);
     for (const [page, record] of this.textures) if (!usedPages.has(page)) { record.texture.destroy(); this.textures.delete(page); }
     const device = this.device, size = physicalSize(scene.width, scene.height, scene.dpr, device.limits.maxTextureDimension2D);

@@ -116,12 +116,24 @@ the retained frame and restores it through a fresh demand render. Canvas2D loss
 now uses the same configured fallback hook as GPU loss; standalone CanvasPainter
 also supports restoration notifications and idempotent listener cleanup.
 
+A synchronous GPU frame failure invalidates its geometry and texture upload
+cursors before returning the error. WebGL retries also allocate backing storage
+again, because allocation errors are reported through `getError`, not JavaScript
+exceptions. The normal successful-frame reuse path is unchanged. Direct
+`UIRenderer.renderNow()` callers that catch an error can retry the same scene:
+failed plans are not retained as already presented, and the failed overlay is
+hidden so the semantic DOM remains visible. Asynchronous WebGPU validation and
+device loss continue to use the existing fallback hook, not a per-frame wait.
+
 Run `npm run build`, `npm run test:rendering`, and the normal repository tests.
 `tools/browser-rendering-resources.py` is in the existing CI suites: Canvas2D in
 Chromium/Firefox/WebKit and required WebGPU/WebGL2 in Chromium, the latter on
 HTTP and file origins. It saves exact pixel comparisons and errors for shared
 textures, single-instance updates, atlas churn, rounded overflow/shadows at four
-DPRs, native text, print recovery and a simulated Canvas2D loss event. Simulated
+DPRs, native text, print recovery, failed-frame retry and a simulated Canvas2D
+loss event. Retry qualification injects a real WebGL invalid upload offset and
+synthetic synchronous WebGPU/Canvas errors, then requires actual backend pixels
+and renewed uploads; it does not claim to simulate asynchronous device loss. Simulated
 loss is not a claim of physical device-loss testing; the existing real GPU
 recovery suites remain in place. Software-driver qualification is not physical
 GPU performance certification. No golden images, tolerances or existing cases

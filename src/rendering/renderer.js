@@ -224,8 +224,16 @@ export class UIRenderer {
     const built = this.view.performance.now();
     const resized = this.canvas.width !== Math.round(scene.width * scene.dpr) || this.canvas.height !== Math.round(scene.height * scene.dpr);
     const painted = force || resized || plan.changed;
-    if (painted) { this.driver.render(plan.scene); this.metrics.frames++; }
-    else this.metrics.unchangedFrames++;
+    if (painted) {
+      try { this.driver.render(plan.scene); }
+      catch (error) {
+        // Direct callers may catch an error without invoking fallback(). Never
+        // skip their retry because RetainedScene already recorded this plan.
+        this.retained.clear(); this.canvas.style.visibility = 'hidden';
+        throw error;
+      }
+      this.metrics.frames++;
+    } else this.metrics.unchangedFrames++;
     const submitted = this.view.performance.now();
     this.metrics.sceneBuilds++;
     if (this.canvas.style.visibility !== 'visible') this.canvas.style.visibility = 'visible';
