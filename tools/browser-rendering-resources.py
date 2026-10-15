@@ -29,7 +29,8 @@ if ENGINE not in ('chromium', 'firefox', 'webkit') or TRANSPORT not in ('http', 
     raise ValueError('Unsupported qualification engine/transport')
 if BACKEND not in ('canvas2d', 'webgpu', 'webgl2') or (BACKEND != 'canvas2d' and ENGINE != 'chromium'):
     raise ValueError('Required GPU qualification uses Chromium')
-OUT = ROOT / 'reports' / f'rendering-resources-{ENGINE}-{BACKEND}-{TRANSPORT}'
+# Keep pixels alongside suite logs: every owning CI artifact includes reports/ci.
+OUT = ROOT / 'reports' / 'ci' / f'rendering-resources-{ENGINE}-{BACKEND}-{TRANSPORT}'
 OUT.mkdir(parents=True, exist_ok=True)
 BUNDLE = (ROOT / 'dist/vb6-rendering.js').read_text()
 RESULTS = []
@@ -70,7 +71,10 @@ with sync_playwright() as pw:
         flags = ['--no-sandbox']
         if BACKEND != 'canvas2d':
             flags += ['--enable-unsafe-webgpu', '--enable-unsafe-swiftshader', '--use-angle=swiftshader',
-                      '--use-vulkan=swiftshader', '--disable-partial-raster', '--run-all-compositor-stages-before-draw']
+                      '--use-vulkan=swiftshader', '--enable-gpu', '--ignore-gpu-blocklist',
+                      '--enable-features=Vulkan', '--use-webgpu-adapter=swiftshader',
+                      '--disable-vulkan-surface', '--disable-gpu-rasterization',
+                      '--disable-partial-raster', '--run-all-compositor-stages-before-draw']
         flags += shlex.split(os.environ.get('RENDERING_BROWSER_FLAGS', ''))
         options.update(args=flags, ignore_default_args=['--hide-scrollbars'])
     browser = getattr(pw, ENGINE).launch(**options)
