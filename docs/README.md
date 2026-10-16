@@ -30,8 +30,8 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [Testing](TESTING.md): setup, reproducible checks and validation boundaries.
 - [Build tools](../tools/README.md) and [test scope](../tests/README.md): maintained
   entry points, fixtures and cleanup rules.
-- [Compatibility](COMPATIBILITY.md) and [user guide](USER_GUIDE.md): supported
-  behavior, deliberate limits and workflows to preserve.
+- [Compatibility](COMPATIBILITY.md), [control compatibility](CONTROLS-COMPATIBILITY.md)
+  and [user guide](USER_GUIDE.md): supported behavior, deliberate limits and workflows to preserve.
 
 ## Language, runtime and project files
 
@@ -66,7 +66,6 @@ These guides describe the implemented system, not complete native VB6 parity.
 
 - [Form designer and SSTab editing](DESIGNER-SUPPORT.md): native tab imports,
   atomic property/collection editors, shared control capabilities and explicit boundaries.
-- [Browser control compatibility](CONTROLS-COMPATIBILITY.md): collection ordering, selection identity, keyboard behavior and explicit native-control boundaries.
 
 - [Optional Figma workspace](figma-workspace.md): real VB6 Assets/Layers/Design,
   reversible workspace profiles, canvas navigation, auto layout and anchoring.
@@ -85,6 +84,8 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [HTML retention and designer measurements](HTML-RENDERING-PERFORMANCE.md): DOM identity, read-before-write batching and browser validation.
 - [UI rendering backends](RENDERING.md): settings, native islands, lifecycle,
   performance measurement and strict acceptance; [rendering source attribution](RENDERING-SOURCES.md).
+- [Rendering resource contracts](RENDERING-RESOURCES.md): atlas lifetime, partial uploads,
+  rounded paint, text fidelity, suspension and exact browser qualification.
 - [GPU startup and recovery](RENDERING-TROUBLESHOOTING.md): adapter/context failures,
   live diagnostics, saved-policy retry and environment limitations.
 - [IDE themes](IDE-THEMES.md), [application themes](APPLICATION-THEMES.md) and
@@ -105,6 +106,7 @@ These guides describe the implemented system, not complete native VB6 parity.
   [native compiler and optimizer](native-compiler-optimization.md),
   [direct Win32 AOT](WIN32-AOT.md) and [export troubleshooting](WIN32-EXPORT-TROUBLESHOOTING.md).
 - [Private native services](WIN32-PRIVATE-SERVICES.md): demand-driven linkage, pointer primitives and owned-frame performance.
+- [Native sequential file I/O](WIN32-SEQUENTIAL-IO.md): Input/Line Input/Write semantics, ownership, encoding and execution gates.
 - [Native strings and control metadata](NATIVE-STRING-METADATA.md): counted BSTRs,
   Replace/InStr binding, Tag/Name lifetime and HWND-backed TabStop.
 - [Win32 controls](WIN32-CONTROLS.md): native AOT control coverage, property and stream ownership, layout integration, output dependencies and Windows execution checks.
@@ -118,7 +120,6 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [Native drawing surfaces](WIN32-SURFACES.md): Form/PictureBox hDC ownership, retained backing, painting, scaling and failure cleanup.
 - [Native RichEdit selection and search](WIN32-RICHEDIT.md): mixed-format masks, Unicode search, line lookup and undo/redo.
 - [Native grids, charts and tab pages](WIN32-GRIDS-CHARTS-TABS.md): storage, editing, GDI, ownership and execution gates.
-- [Native sequential file I/O](WIN32-SEQUENTIAL-IO.md): Open/Input/Output/Append, typed record parsing, handle ownership and Windows execution gates.
 - AOT language/ABI contracts: [numeric storage](WIN32-NUMERIC.md),
   [Currency](WIN32-CURRENCY.md), [Date](WIN32-DATES.md),
   [calendar intervals](WIN32-CALENDAR-INTERVALS.md), [arrays](WIN32-ARRAYS.md),
