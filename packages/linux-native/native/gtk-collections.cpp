@@ -77,12 +77,13 @@ void GtkControl::reloadList() {
   if(!GTK_IS_TREE_VIEW(widget))return;
   size_t columns=!grid.empty()?std::max(size_t(1),grid.front().size()):spec.type=="ListView"?std::max(size_t(1),items("columnheaders")->values.size()):1;
   std::vector<GType> types(columns+1,G_TYPE_STRING);types.back()=G_TYPE_UINT64;
-  auto* store=gtk_tree_store_newv(int(types.size()),types.data());treePaths.clear();
+  std::unique_ptr<GtkTreeStore,decltype(&g_object_unref)> store(gtk_tree_store_newv(int(types.size()),types.data()),&g_object_unref);
+  std::map<uint64_t,std::string> paths;
   auto append=[&](GtkTreeIter* parent,const std::vector<Text>& cells,uint64_t id) {
-    GtkTreeIter iter;gtk_tree_store_append(store,&iter,parent);
-    for(size_t col=0;col<columns;++col)gtk_tree_store_set(store,&iter,int(col),col<cells.size()?toUTF8(cells[col]).c_str():"",-1);
-    gtk_tree_store_set(store,&iter,int(columns),guint64(id),-1);
-    if(id){auto* path=gtk_tree_model_get_path(GTK_TREE_MODEL(store),&iter);auto* text=gtk_tree_path_to_string(path);treePaths[id]=text;g_free(text);gtk_tree_path_free(path);}return iter;
+    GtkTreeIter iter;gtk_tree_store_append(store.get(),&iter,parent);
+    for(size_t col=0;col<columns;++col)gtk_tree_store_set(store.get(),&iter,int(col),col<cells.size()?toUTF8(cells[col]).c_str():"",-1);
+    gtk_tree_store_set(store.get(),&iter,int(columns),guint64(id),-1);
+    if(id){auto* path=gtk_tree_model_get_path(GTK_TREE_MODEL(store.get()),&iter);auto* text=gtk_tree_path_to_string(path);paths[id]=text;g_free(text);gtk_tree_path_free(path);}return iter;
   };
   if(spec.type=="TreeView") {
     std::function<void(const std::shared_ptr<GtkItem>&,GtkTreeIter*,size_t)> add=[&](const auto& item,GtkTreeIter* parent,size_t depth){if(depth>1024)fail(7,"Tree exceeds native depth limit");auto iter=append(parent,{itemText(*item)},item->identity);for(auto& child:item->children)add(child,&iter,depth+1);};
@@ -91,7 +92,7 @@ void GtkControl::reloadList() {
     for(auto& item:items("listitems")->values){std::vector<Text> cells{itemText(*item)};if(item->subitems)for(auto& sub:item->subitems->values)cells.push_back(itemText(*sub));append(nullptr,cells,item->identity);}
   } else if(!grid.empty()) {for(auto& row:grid)append(nullptr,row,0);}
   else {for(auto& value:list)append(nullptr,{value},0);}
-  auto* previous=model;model=GTK_TREE_MODEL(store);gtk_tree_view_set_model(GTK_TREE_VIEW(widget),model);if(previous)g_object_unref(previous);
+  auto* previous=model;model=GTK_TREE_MODEL(store.release());treePaths.swap(paths);gtk_tree_view_set_model(GTK_TREE_VIEW(widget),model);if(previous)g_object_unref(previous);
   auto* selection=gtk_tree_view_get_selection(GTK_TREE_VIEW(widget));gtk_tree_selection_set_mode(selection,flag("multiselect")?GTK_SELECTION_MULTIPLE:GTK_SELECTION_SINGLE);
   for(auto index:selected){auto* path=gtk_tree_path_new_from_indices(int(index),-1);gtk_tree_selection_select_path(selection,path);gtk_tree_path_free(path);}
   if(spec.type=="TreeView")for(auto& item:items("nodes")->values)if(itemFlag(*item,"expanded")){auto found=treePaths.find(item->identity);if(found!=treePaths.end()){auto* path=gtk_tree_path_new_from_string(found->second.c_str());gtk_tree_view_expand_row(GTK_TREE_VIEW(widget),path,FALSE);gtk_tree_path_free(path);}}
@@ -163,9 +164,10 @@ Value GtkItems::invoke(Runtime& rt,const std::string& raw,Args args) {
   if(name=="clear"){if(!args.empty())fail(450);for(auto& item:values){item->owner.reset();item->children.clear();}values.clear();changed();return {};}
   if(name=="remove") {
     if(args.size()!=1)fail(450);auto victim=item(args[0].value);std::set<GtkItem*> remove;
-    std::function<void(const std::shared_ptr<GtkItem>&)> mark=[&](const auto& item){remove.insert(item.get());for(auto& child:item->children)mark(child);};mark(victim);
+    std::vector<std::shared_ptr<GtkItem>> pending{victim};
+    while(!pending.empty()){auto item=pending.back();pending.pop_back();if(remove.insert(item.get()).second)pending.insert(pending.end(),item->children.begin(),item->children.end());}
     if(auto p=victim->parent.lock())p->children.erase(std::remove(p->children.begin(),p->children.end(),victim),p->children.end());
-    for(auto& value:values)if(remove.count(value.get()))value->owner.reset();values.erase(std::remove_if(values.begin(),values.end(),[&](auto& value){return remove.count(value.get());}),values.end());changed();return {};
+    for(auto& value:values)if(remove.count(value.get())){value->owner.reset();value->children.clear();}values.erase(std::remove_if(values.begin(),values.end(),[&](auto& value){return remove.count(value.get());}),values.end());changed();return {};
   }
   if(name=="add") {
     if(values.size()>=100000)fail(7,"Native collection exceeds 100000 items");
@@ -177,7 +179,9 @@ Value GtkItems::invoke(Runtime& rt,const std::string& raw,Args args) {
     size_t at=values.size();
     if(kind=="nodes") {
       auto relative=argument(args,0);auto relationship=integerArgument(args,1,0);if(relationship<0||relationship>4)fail(5);
-      if(relative.type!=Type::Missing&&relative.type!=Type::Empty){auto target=item(relative);auto p=relationship==4?target:target->parent.lock();value->parent=p;
+      if(relative.type!=Type::Missing&&relative.type!=Type::Empty){auto target=item(relative);auto p=relationship==4?target:target->parent.lock();
+        size_t depth=0;for(auto ancestor=p;ancestor;ancestor=ancestor->parent.lock())if(++depth>1024)fail(7,"Tree exceeds native depth limit");
+        value->parent=p;
         if(p){auto found=std::find(p->children.begin(),p->children.end(),target);auto pos=relationship==1?0:relationship==2&&found!=p->children.end()?size_t(found-p->children.begin()+1):relationship==3&&found!=p->children.end()?size_t(found-p->children.begin()):p->children.size();p->children.insert(p->children.begin()+pos,value);}
         if(relationship==1)at=0;else if(relationship==2||relationship==3){at=size_t(std::find(values.begin(),values.end(),target)-values.begin())+(relationship==2?1:0);}
       }

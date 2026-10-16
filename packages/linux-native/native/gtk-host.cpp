@@ -50,7 +50,10 @@ int16_t virtualKey(guint key) {
   auto found = special.find(key); if (found != special.end()) return found->second;
   if (key >= GDK_KEY_F1 && key <= GDK_KEY_F24) return int16_t(112 + key - GDK_KEY_F1);
   auto value = gdk_keyval_to_unicode(gdk_keyval_to_upper(key));
-  return value <= 255 ? int16_t(value) : 0;
+  // A Unicode key has no legacy Windows virtual-key equivalent. Use VK_PACKET
+  // so the usual ByRef KeyCode = 0 cancellation remains unambiguous, while GTK
+  // can deliver non-Latin and supplementary characters through its input method.
+  return value <= 255 ? int16_t(value) : 231;
 }
 Args mouseArgs(GtkControl& control, double x, double y, guint state, guint button) {
   int buttons = button == 1 ? 1 : button == 3 ? 2 : button == 2 ? 4 : 0;
@@ -337,11 +340,11 @@ bool GtkHost::closeForm(const std::shared_ptr<GtkForm>& value) {
   if(value->closing)return true;runtime->unload(value->owner,0);return !value->owner->loaded;
 }
 gboolean GtkHost::keyEvent(GtkControl& control,GdkEventKey* input,bool down) {
-  auto value=control.form();auto code=std::make_shared<Cell>(Value::integer(virtualKey(input->keyval),Type::Integer),"integer");
+  auto value=control.form();auto originalCode=virtualKey(input->keyval);auto code=std::make_shared<Cell>(Value::integer(originalCode,Type::Integer),"integer");
   Args args{Arg(cellRef(code)),Arg(Value::integer(modifiers(input->state),Type::Integer))};
   if(value->surface->flag("keypreview")&&value->surface.get()!=&control)value->surface->event(down?"keydown":"keyup",args);
-  if(code->get().integral())control.event(down?"keydown":"keyup",args);
-  if(!code->get().integral())return TRUE;
+  if(code->get().integral()||!originalCode)control.event(down?"keydown":"keyup",args);
+  if(originalCode&&!code->get().integral())return TRUE;
   if(down) {
     auto unicode=gdk_keyval_to_unicode(input->keyval);
     if(unicode && unicode<=0xffff && !(input->state&(GDK_CONTROL_MASK|GDK_MOD1_MASK))) {
@@ -356,7 +359,7 @@ gboolean GtkHost::keyEvent(GtkControl& control,GdkEventKey* input,bool down) {
   return FALSE;
 }
 void gtkConnectInput(GtkControl& c) {
-  if(!c.widget)return;auto self=c.self();auto* target=c.widget;
+  if(!c.widget)return;auto self=c.self();auto* target=c.view&&GTK_IS_EVENT_BOX(c.view)?c.view:c.widget;
   gtk_widget_add_events(target,GDK_KEY_PRESS_MASK|GDK_KEY_RELEASE_MASK|GDK_BUTTON_PRESS_MASK|GDK_BUTTON_RELEASE_MASK|GDK_POINTER_MOTION_MASK|GDK_FOCUS_CHANGE_MASK);
   gtkSignal(target,"key-press-event",G_CALLBACK(+[](GtkWidget*,GdkEventKey* e,gpointer d)->gboolean {gboolean result=FALSE;gtkEvent(d,[&](GtkControl& c){result=c.host->keyEvent(c,e,true);});return result;}),self);
   gtkSignal(target,"key-release-event",G_CALLBACK(+[](GtkWidget*,GdkEventKey* e,gpointer d)->gboolean {gboolean result=FALSE;gtkEvent(d,[&](GtkControl& c){result=c.host->keyEvent(c,e,false);});return result;}),self);

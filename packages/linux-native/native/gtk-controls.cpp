@@ -19,6 +19,12 @@ void markWidget(GtkWidget* widget,const std::shared_ptr<GtkControl>& control) {
   if(!widget)return;g_object_set_data_full(G_OBJECT(widget),"vb6-control",new std::weak_ptr<GtkControl>(control),
     [](gpointer data){delete static_cast<std::weak_ptr<GtkControl>*>(data);});
 }
+void watchDestruction(GtkWidget* widget,const std::shared_ptr<GtkControl>& control) {
+  gtkSignal(widget,"destroy",G_CALLBACK(+[](GtkWidget*,gpointer data) noexcept {
+    auto c=gtkModel(data);if(!c||c->disposed)return;
+    try{c->dispose();}catch(...){if(!c->hostLife.expired()){c->host->pending=std::current_exception();c->host->stopLoops();}}
+  }),control);
+}
 }
 
 std::string gtkCaption(const Text& input,bool mnemonic) {
@@ -122,7 +128,7 @@ void GtkControl::initialize() {
   const auto& type=spec.type;auto caption=gtkCaption(property("caption",Value::string(fromUTF8(spec.name))).string());
   if(type=="Menu") {
     auto text=property("caption",Value::string(u"")).string();menu=text==u"-"?gtk_separator_menu_item_new():gtk_check_menu_item_new_with_mnemonic(caption.c_str());
-    g_object_ref_sink(menu);view=menu;widget=menu;handle=host->handles.add(self(),HandleKind::Menu);
+    g_object_ref_sink(menu);view=menu;widget=menu;watchDestruction(view,self());handle=host->handles.add(self(),HandleKind::Menu);
     gtkSignal(menu,"activate",G_CALLBACK(+[](GtkMenuItem*,gpointer data){gtkEvent(data,[](GtkControl& c){c.event("click");});}),self());refresh();return;
   }
   if(type=="Timer"||type=="CommonDialog"||type=="ImageList") {
@@ -160,7 +166,7 @@ void GtkControl::initialize() {
   else if(type=="Toolbar")widget=gtk_toolbar_new();
   else if(type=="StatusBar")widget=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
   else fail(453,"GTK native control is not implemented: "+type);
-  if(!view)view=widget;g_object_ref_sink(view);markWidget(view,self());if(widget!=view)markWidget(widget,self());
+  if(!view)view=widget;g_object_ref_sink(view);markWidget(view,self());if(widget!=view)markWidget(widget,self());watchDestruction(view,self());
   handle=host->handles.add(self(),type=="Form"||type=="MDIForm"?HandleKind::Window:HandleKind::Control);
   gtk_widget_set_name(widget,("vb6-"+spec.name).c_str());
   if(GTK_IS_BUTTON(widget))gtkSignal(widget,GTK_IS_TOGGLE_BUTTON(widget)?"toggled":"clicked",G_CALLBACK(+[](GtkButton*,gpointer data){gtkEvent(data,[](GtkControl& c){c.changed(GTK_IS_TOGGLE_BUTTON(c.widget)?"value":"click");});}),self());
@@ -222,12 +228,16 @@ void GtkControl::refresh() {
 }
 void GtkControl::dispose() {
   if(disposed)return;disposed=true;if(timer){g_source_remove(timer);timer=0;}
+  if(!hostLife.expired()){host->cancelTimers(handle);host->handles.remove(persistentDC);host->handles.remove(handle);}persistentDC=0;
   if(dataBinding){dataBinding->detach();dataBinding.reset();}pendingEdit.reset();
   for(auto& entry:collections)entry.second->owner.reset();
-  if(view){gtk_widget_destroy(view);g_object_unref(view);}view=widget=content=menu=nullptr;
+  // Containers can destroy their descendants independently of VB Unload (for
+  // example Tabs.Remove). Invalidate borrowed widget pointers before GTK's
+  // recursive destruction, then release exactly the reference owned by us.
+  auto* owned=std::exchange(view,nullptr);widget=content=menu=nullptr;
+  if(owned){if(!gtk_widget_in_destruction(owned))gtk_widget_destroy(owned);g_object_unref(owned);}
   if(model){g_object_unref(model);model=nullptr;}if(css){g_object_unref(css);css=nullptr;}
   for(auto& page:tabPages)g_object_unref(page.second);tabPages.clear();
-  if(!hostLife.expired())host->handles.remove(handle);
 }
 void GtkControl::event(const std::string& name,Args args) {
   if(disposed||suppressEvents)return;auto object=owner.lock();if(!object||!object->loaded)return;
@@ -287,7 +297,7 @@ Value GtkControl::get(Runtime& rt,const std::string& raw) {
   if(name=="datasource"&&isGrid(*this))return Value::object(dataBinding?dataBinding->source:nullptr);
   if(name=="currentx")return Value::real(currentX,Type::Single);if(name=="currenty")return Value::real(currentY,Type::Single);
   if(name=="scalewidth"||name=="scaleheight")return property(name,Value::real(view?(name=="scalewidth"?gtk_widget_get_allocated_width(view):gtk_widget_get_allocated_height(view))/unit(-1,name=="scalewidth"):0,Type::Single));
-  if(name=="hdc")return host->api(rt,"user32.GetDC",{Arg(Value::integer(handle))});
+  if(name=="hdc"){if(!host->handles.find(persistentDC,HandleKind::DC))persistentDC=int32_t(host->api(rt,"user32.GetDC",{Arg(Value::integer(handle))}).integral());return Value::integer(persistentDC);}
   if(name=="picture"||name=="mouseicon"||name=="icon"||name=="disabledpicture"||name=="downpicture")return property(name,Value::object(nullptr));
   auto it=properties.find(name);if(it!=properties.end())return it->second;
   if(name=="tag"||name=="tooltiptext"||name=="text"||name=="caption")return Value::string(u"");

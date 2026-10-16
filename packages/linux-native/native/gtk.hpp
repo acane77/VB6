@@ -92,6 +92,7 @@ struct GtkControl final : Object {
   GtkTreeModel* model = nullptr;
   GtkCssProvider* css = nullptr;
   int32_t handle = 0;
+  int32_t persistentDC = 0;
   guint timer = 0;
   bool initialized = false, disposed = false, eventActive = false, resizing = false;
   size_t suppressEvents = 0;
