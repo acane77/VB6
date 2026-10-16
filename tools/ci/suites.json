@@ -28,14 +28,16 @@
   ],
   "integration-authoring": [
     "browser-classic-export-tests.py",
-    "browser-theme-tests.py",
     "browser-layout-tests.py",
     "auto-layout-browser-tests.py",
     "browser-diagnostics-navigation-tests.py",
+    "browser-sample-exports.py",
+    "browser-exporter-tests.py"
+  ],
+  "integration-appearance": [
+    "browser-theme-tests.py",
     "browser-application-theme-tests.py",
     "browser-native-caption-tests.py",
-    "browser-sample-exports.py",
-    "browser-exporter-tests.py",
     "browser-macos-reference-tests.py",
     "browser-winui-tests.py"
   ],
