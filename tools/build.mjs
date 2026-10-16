@@ -1,6 +1,7 @@
 import {buildIntelligentUI} from './build-intelligent-ui.mjs';
 import './build-vbnet-migration.mjs';
 import {buildMacOSPackage} from './build-macos-native.mjs';
+import {buildLinuxPackage} from './build-linux-native.mjs';
 import {recordIdeArtifacts,verifyIdeArtifacts} from './ide-artifacts.mjs';
 import './theme-css.mjs';
 import {writeApplicationThemeTokens} from './application-theme-css.mjs';
@@ -10,6 +11,7 @@ writeIdeThemePalettes();
 import fs from 'node:fs';import path from 'node:path';import {bundle} from './bundle.mjs';
 const root=path.resolve(import.meta.dirname,'..');process.chdir(root);fs.mkdirSync('dist',{recursive:true});
 buildMacOSPackage(root);
+buildLinuxPackage(root);
 buildIntelligentUI(root);
 const layout=bundle(path.resolve('packages/auto-layout/src/index.js'),'VB6AutoLayout');fs.mkdirSync('packages/auto-layout/dist',{recursive:true});fs.writeFileSync('packages/auto-layout/dist/auto-layout.js',layout);fs.writeFileSync('dist/auto-layout.js',layout);
 const win32=bundle(path.resolve('packages/win32-browser/src/index.js'),'Win32Compat');fs.mkdirSync('packages/win32-browser/dist',{recursive:true});fs.writeFileSync('packages/win32-browser/dist/win32-browser.js',win32);fs.writeFileSync('dist/win32-browser.js',win32);

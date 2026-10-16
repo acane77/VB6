@@ -31,8 +31,11 @@ export function aotScalar(input){
   }
   return {type,variant,...(value===undefined?{}:{value})};
 }
-class DirectLowering extends MacOSLowering {
-  constructor(program,options){super(program,options);this.functions=[];this.names=[];this.nameIds=new Map();this.literals=[];this.literalIds=new Map();this.modules=[];this.depth=0;this.n('');}
+export class DirectLowering extends MacOSLowering {
+  // The helper-call graph and VB6 binder are shared by native targets. Defaults
+  // preserve the macOS code generator and its existing diagnostics exactly.
+  constructor(program,options,platform={}){super(program,options);this.platform=platform;this.functions=[];this.names=[];this.nameIds=new Map();this.literals=[];this.literalIds=new Map();this.modules=[];this.depth=0;this.n('');}
+  fail(message,code='MAC100'){if(!this.platform.CompileError)return super.fail(message,code);throw new this.platform.CompileError(message,this.module?.name,this.instruction?.line||this.procedure?.line||1,code.replace(/^MAC/,this.platform.diagnosticPrefix||'NATIVE'));}
   n(value){value=String(value);if(!this.nameIds.has(value)){this.nameIds.set(value,this.names.length);this.names.push(value);}return this.nameIds.get(value);}
   literalId(value){const item=aotScalar(value),key=JSON.stringify(item);if(!this.literalIds.has(key)){this.literalIds.set(key,this.literals.length);this.literals.push(item);}return this.literalIds.get(key);}
   literal(value){return this.f.call('literal',this.literalId(value));}
@@ -61,6 +64,7 @@ class DirectLowering extends MacOSLowering {
         if(parts.length)owners=[this.program.modules.get(lower(parts.join('.')))];else if(this.module.procedures.has(name))owners=[this.module];else owners=[...this.program.modules.values()].filter(m=>m.kind==='module'&&m.procedures.has(name)&&m.procedures.get(name).scope!=='private');
         owners=owners.filter(Boolean);if(owners.length!==1||owners[0].kind!=='module')this.fail('AddressOf must resolve one standard-module procedure','MAC230');
         const p=owners[0].procedures.get(name);if(!p||p.external||p.returnArray||p.params.some(p=>p.optional||p.paramArray||p.byRef||p.bounds!==null&&p.bounds!==undefined))this.fail('Native callbacks require fixed ByVal scalar parameters','MAC230');
+        this.platform.validateCallback?.(node,this,owners[0],p);
         return f.call('callback',this.n(owners[0].name),this.n(p.name));
       }
       default:this.fail('Unsupported AOT expression '+node.kind,'MACA100');
@@ -151,7 +155,7 @@ class DirectLowering extends MacOSLowering {
   }
   emitProcedure(proc){
     this.procedure=proc;this.instruction=null;this.procedures++;const f=this.startFunction();
-    if(proc.external){const adapter=resolveMacOSDeclaration(proc,this.module.name);this.external.push({...adapter,procedure:proc.name,source:this.module.name});f.call('api',this.n(adapter.id),proc.kind==='sub'?0:this.n(proc.storageReturnType||proc.returnType));f.end();this.finishFunction();return f.id;}
+    if(proc.external){const adapter=(this.platform.resolveDeclaration||resolveMacOSDeclaration)(proc,this.module.name);this.external.push({...adapter,procedure:proc.name,source:this.module.name});f.call('api',this.n(adapter.id),proc.kind==='sub'?0:this.n(proc.storageReturnType||proc.returnType));f.end();this.finishFunction();return f.id;}
     for(const d of proc.redimDeclarations||[]){f.reset();this.declaration(d,false,false);}
     for(const ins of proc.code)if(ins.op==='dim')for(const d of ins.decls){f.reset();this.declaration(d,false,ins.static);}
     this.instructions+=proc.code.length;
@@ -179,7 +183,7 @@ class DirectLowering extends MacOSLowering {
       if(module.form){m.form=this.spec({...module.form,name:module.name});m.controls=module.form.controls.map(c=>this.spec(c));m.menus=(module.form.menus||[]).map(c=>this.spec({...c,type:'Menu'}));}
       this.modules.push(m);
     }
-    const section=emitAOTFunctions(this.functions,this.options.optimization),metadata={abi:AOT_ABI,name:this.options.name,startup:this.program.startup,maxArrayElements:this.options.maxArrayElements,maxCallDepth:this.options.maxCallDepth,names:this.names,literals:this.literals,modules:this.modules,entries:this.functions.map(f=>section.labels.get('aot_entry_'+f.id))};
+    const section=(this.platform.emitFunctions||emitAOTFunctions)(this.functions,this.options.optimization),metadata={abi:AOT_ABI,name:this.options.name,startup:this.program.startup,maxArrayElements:this.options.maxArrayElements,maxCallDepth:this.options.maxCallDepth,names:this.names,literals:this.literals,modules:this.modules,entries:this.functions.map(f=>section.labels.get('aot_entry_'+f.id))};
     const text=JSON.stringify(metadata);if(new TextEncoder().encode(text).length>8*1024*1024)this.fail('Project metadata exceeds the bounded 8 MiB native reader','MACA202');
     return {section,metadata,functions:this.functions};
   }

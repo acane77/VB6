@@ -49,6 +49,7 @@
     "browser-xaml-tests.py",
     "browser-macos-export-tests.py",
     "browser-macos-aot-tests.py",
+    "browser-linux-aot-tests.py",
     "browser-designer-tests.py",
     "browser-exporter-offline-tests.py"
   ],
