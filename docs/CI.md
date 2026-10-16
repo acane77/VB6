@@ -69,6 +69,7 @@ python -m pip install -r tools/ci/requirements-checks.txt
 python tools/ci/check.py
 python tools/ci/test_run.py
 python tools/ci/test_check.py
+python tools/ci/test_tui_acceptance.py
 node --test tests/ci-gate.test.mjs
 VB6_BROWSER=chromium VB6_TEST_TRANSPORT=http python tools/ci/run.py figma
 # Reproduce one exact CI partition:
@@ -78,7 +79,8 @@ VB6_BROWSER=chromium VB6_TEST_TRANSPORT=http python tools/ci/run.py figma-servic
 The audit rejects duplicate YAML keys, missing gate dependencies, cycles, missing
 suite owners, missing engines/origins/platforms, omitted Figma partitions, matrix exclusions,
 duplicate matrix values, extra `.yaml` workflows and failure suppression. It also
-parses Bash blocks. The pinned, SHA-256-verified actionlint binary checks Actions
+parses Bash blocks and requires the reference-admission/GPU-entrypoint tests to
+execute unconditionally in the audit job. The pinned, SHA-256-verified actionlint binary checks Actions
 syntax and expression types. Historical timings or results do not qualify a
 later source revision.
 

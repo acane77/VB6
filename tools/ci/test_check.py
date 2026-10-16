@@ -19,6 +19,9 @@ class WorkflowAuditTests(unittest.TestCase):
         value=copy.deepcopy(self.workflow);mutate(value);self.path.write_text(yaml.safe_dump(value,sort_keys=False))
         with self.assertRaises(ValueError):check.audit(self.root)
     def test_complete_graph_passes(self):self.assertEqual(check.audit(self.root)['preservedEntrypoints'],89)
+    def test_tui_admission_tests_cannot_be_omitted(self):
+        self.reject(lambda w:[s.update({'run':s['run'].replace('python tools/ci/test_tui_acceptance.py','')})
+                              for s in w['jobs']['hygiene']['steps'] if 'run' in s])
     def test_compute_reference_dependency_required(self):
         self.reject(lambda w:w['jobs']['compute-gpu'].update({'needs':['hygiene']}))
     def test_compute_shader_execution_cannot_be_removed(self):

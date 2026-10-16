@@ -68,6 +68,13 @@ def audit(root=ROOT):
     if not any(step.get('uses') == 'actions/download-artifact@v4' and
                step.get('with', {}).get('name') == 'compute-native-reference' for step in compute_steps):
         raise ValueError('Compute acceptance must use this run’s native reference artifact')
+    # Python audit files are explicitly invoked, unlike the Node glob. Keep
+    # the reference-admission and GPU-entrypoint regressions in the required
+    # unconditional audit instead of merely shipping an unexecuted test file.
+    if not any(step.get('if') is None and
+               re.search(r'(?m)^\s*python tools/ci/test_tui_acceptance\.py\s*$', step.get('run', ''))
+               for step in jobs['hygiene']['steps']):
+        raise ValueError('TUI reference admission tests must execute in the required audit')
     if jobs['node']['strategy']['matrix']['shard'] != [1, 2, 3, 4]:
         raise ValueError('Node shards must partition all four parts')
     if '--test-shard="${SHARD}/4" tests/*.test.mjs' not in (root / '.github/workflows/validate.yml').read_text():
