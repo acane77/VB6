@@ -119,6 +119,17 @@ assertions, browser engines, per-job deadlines and the required `test` gate rema
 unchanged. The coverage audit rejects omission of this partition or duplicate
 entrypoint ownership among browser partitions.
 
+## Appearance acceptance ownership
+
+The `integration-appearance` browser partition owns the IDE theme, application
+theme, native caption, macOS reference and WinUI suites. It runs independently
+from the layout, diagnostics and export checks in `integration-authoring`, so
+those groups each receive the existing 15-minute job deadline. Both partitions
+run on Chromium, Firefox and WebKit with the same browser setup and transport.
+All five appearance scripts and every existing assertion retain coverage under
+the required `test` gate. The coverage audit rejects missing suite owners and
+duplicate entrypoints across browser partitions.
+
 ## Offline-origin qualification
 
 The export acceptance server stops its actual listening socket for every outage.

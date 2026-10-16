@@ -230,6 +230,7 @@ jobs:
         suite:
           - integration-controls
           - integration-authoring
+          - integration-appearance
           - tui-authoring
           - intelligent-ui
           - project-authoring

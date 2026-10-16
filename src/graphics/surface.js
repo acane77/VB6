@@ -1,3 +1,4 @@
+import {MACOS26_COLOR_ROLES,macos26Resource} from '../theme/macos26-resources.js';
 import {notifyControlPaint} from '../rendering/invalidation.js';
 import {GPURasterPresenter} from '../../packages/win32-browser/src/gpu-presenter.js';
 import { colorValue, getTheme } from '../theme/theme.js';
@@ -55,7 +56,9 @@ export class GraphicsSurface extends RetainedGraphics {
     this.resizeObserver=new this.themeDocument.defaultView.ResizeObserver(()=>this.scheduleResize());this.resizeObserver.observe(container);
     this.resize();if(backend!=='canvas2d')this.gpuReady=this.initializeGPU();else this.reportBackend('Canvas2D');
   }
-  get background(){return this._background;}
+  get background(){const t=getTheme(this.theme);return this._backgroundRole&&t.family==='macos26'?macos26Resource(this._backgroundRole,t.scheme):this._background;}
+  get backgroundRole(){return this._backgroundRole||'';}
+  set backgroundRole(value){if(value!==''&&!Object.hasOwn(MACOS26_COLOR_ROLES,value))throw new TypeError('Unknown macOS background role');if(value!==this.backgroundRole){this._backgroundRole=value;this.invalidate();}}
   set background(value){value=graphicsColor(value);if(value!==this._background){this._background=value;this.invalidate();}}
   bindDocument(){this.themeDocument.addEventListener('vb-theme-change',this.themeChanged);this.themeDocument.fonts?.addEventListener('loadingdone',this.fontsChanged);}
   unbindDocument(){this.themeDocument.removeEventListener('vb-theme-change',this.themeChanged);this.themeDocument.fonts?.removeEventListener('loadingdone',this.fontsChanged);}
