@@ -147,14 +147,23 @@ export class CanvasCellRenderer {
     if(this.disposed)throw new Error('Cell renderer is disposed');
     const size=this.dimensions(buffer,dpr);dpr=size.dpr;
     const key=[size.width,size.height,buffer.columns,buffer.rows,dpr].join(':');
-    if(key!==this.key){this.key=key;this.canvas.width=size.width;this.canvas.height=size.height;buffer.invalidate();}
-    const ctx=this.context;ctx.imageSmoothingEnabled=false;
-    for(const span of buffer.takeDamage())for(let x=span.x;x<span.x+span.width;x++){
-      const i=span.y*buffer.columns+x,left=Math.round(x*this.cellWidth*dpr),top=Math.round(span.y*this.cellHeight*dpr);
-      const width=Math.round((x+1)*this.cellWidth*dpr)-left,height=Math.round((span.y+1)*this.cellHeight*dpr)-top;
-      const glyph=this.atlas.glyph(buffer.glyphs[i],buffer.colors[i],width,height,this.palette,this.opaque,buffer.styles?.[i]||0);
-      if(!this.opaque)ctx.clearRect(left,top,width,height);
-      ctx.drawImage(glyph,left,top);
+    try {
+      // Changing either bitmap dimension resets the context and pixels. Do not
+      // publish the retained key until every damaged cell has been submitted.
+      if(key!==this.key){this.canvas.width=size.width;this.canvas.height=size.height;buffer.invalidate();}
+      const ctx=this.context;ctx.imageSmoothingEnabled=false;
+      for(const span of buffer.takeDamage())for(let x=span.x;x<span.x+span.width;x++){
+        const i=span.y*buffer.columns+x,left=Math.round(x*this.cellWidth*dpr),top=Math.round(span.y*this.cellHeight*dpr);
+        const width=Math.round((x+1)*this.cellWidth*dpr)-left,height=Math.round((span.y+1)*this.cellHeight*dpr)-top;
+        const glyph=this.atlas.glyph(buffer.glyphs[i],buffer.colors[i],width,height,this.palette,this.opaque,buffer.styles?.[i]||0);
+        if(!this.opaque)ctx.clearRect(left,top,width,height);
+        ctx.drawImage(glyph,left,top);
+      }
+      this.key=key;
+    } catch(error) {
+      // Some cells may have reached the bitmap. Repaint from canonical buffer
+      // contents on retry; never regard partially submitted damage as clean.
+      this.key='';buffer.invalidate();throw error;
     }
   }
   dispose(){if(this.disposed)return;this.disposed=true;if(this.ownsAtlas)this.atlas.clear();this.canvas.width=this.canvas.height=1;}
