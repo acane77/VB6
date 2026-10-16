@@ -58,7 +58,7 @@ jobs:
           retention-days: 7
   node:
     name: Node tests (${{ matrix.shard }}/4)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     strategy:
       fail-fast: false
@@ -75,6 +75,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Install the native Linux runtime dependency for Node tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-0t64
       - name: Build checked products
         run: npm run build
       - name: Initialize installed .NET SDK before parallel conformance tests
@@ -911,9 +915,9 @@ jobs:
       - name: Validate compiler, ELF, archive and package contracts
         run: npm run test:linux
       - name: Execute the shipped native runtime and GTK controls
-        run: xvfb-run -a node tools/test-linux-aot.mjs
+        run: node tools/test-linux-aot.mjs
       - name: Rebuild current native sources and execute generated code
-        run: xvfb-run -a node tools/test-linux-aot.mjs --rebuild
+        run: node tools/test-linux-aot.mjs --rebuild
       - uses: actions/upload-artifact@v4
         if: always()
         with:

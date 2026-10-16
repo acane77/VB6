@@ -64,6 +64,14 @@ GTK supplies X11 and Wayland display backends. A console-only project can run wi
 
 Controls use native GTK widgets with the VB6 forms/property model, including real events, form lifetimes and native drawing. The toolkit catalog describes the mapped control types. Acceptance tests establish concrete implemented behavior; they do not certify every property/event of every VB6 OCX. Windows DLLs, COM servers and OCX binaries cannot be loaded into this Linux process. Unsupported native declarations receive compiler diagnostics.
 
+The GTK host has these explicit API limits:
+
+| API | Linux behavior |
+| --- | --- |
+| `RichTextBox.LoadFile` / `SaveFile` | UTF-8 plain text only, using format `1`; an omitted format also defaults to `1`. Other formats, including RTF format `0`, raise VB error `453`. RTF formatting is not preserved. |
+| `Printers` collection | Enumeration raises VB error `453`. Native `Printer` output uses the GTK system print dialog for printer selection. |
+| `App.PrevInstance` | Raises VB error `453` because this host has no registered application identifier for previous-instance detection. |
+
 The initial executable target does not include Linux ARM64, a static GTK distribution, AppImage, Flatpak, or DEB/RPM installers. The ELF application directory is directly runnable when its recorded system-library requirements are satisfied.
 
 ## Runtime architecture

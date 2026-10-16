@@ -152,6 +152,14 @@ Form loading, instance lifetime, events and error propagation use the existing r
 
 The explicit `LINUX_API_SIGNATURES` catalog adapts a documented set of common Windows-style declarations to native Linux/GTK services. It does not load a Windows DLL. Declarations without an adapter receive compiler diagnostics. Windows COM servers, OCX binaries and arbitrary Windows ABI calls remain platform-specific.
 
+These GTK host APIs have explicit compatibility limits:
+
+| API | Linux behavior |
+| --- | --- |
+| `RichTextBox.LoadFile` / `SaveFile` | Read and write UTF-8 plain text with format `1`. An omitted format defaults to `1` in this host. Other formats, including RTF format `0`, raise VB error `453`; RTF formatting is not preserved. |
+| `Printers` collection | Enumeration raises VB error `453`. The `Printer` object supports native output through the GTK system print dialog, where the user can select a printer. |
+| `App.PrevInstance` | Raises VB error `453`: the host has no registered application identifier for detecting a previous instance. |
+
 The first exported runtime targets **Linux x86-64 with GTK 3.24 and glibc 2.39 or newer**, built and tested on Ubuntu 24.04. The build report records required GLIBC/GLIBCXX symbol versions and native dependencies. The compatible GNU C++ runtime and GTK runtime packages must be installed on the destination. For Ubuntu 24.04:
 
 ```sh
@@ -176,11 +184,13 @@ The existing artifact lifetime, ownership, cancellation and revision checks appl
 
 ```sh
 npm run test:linux
-xvfb-run -a node tools/test-linux-aot.mjs
+node tools/test-linux-aot.mjs
 python tools/browser-linux-aot-tests.py
 ```
 
 The Node suite checks code generation, ELF layouts and relocations, malformed input rejection, archives, package isolation and output publication. Native acceptance executes actual generated x86-64 procedures and GTK behavior. The browser suite downloads a complete archive from HTTP and standalone-file IDEs, compares it to Node output, verifies executable modes, and checks cancellation, stale-project rejection and diagnostics.
+
+The native acceptance tool starts Xvfb for its GUI cases and keeps console cases headless. Invoke it directly; an outer `xvfb-run` is unnecessary.
 
 The canonical validation workflow requires native Linux tests and a rebuild from current native sources. Its browser jobs export in Chromium, Firefox and WebKit; a dependent Linux job verifies and executes those exact downloads. Reports and generated applications are retained as workflow artifacts.
 
@@ -188,7 +198,7 @@ Native SDK updates use the existing build/test/embed pattern:
 
 ```sh
 sudo apt-get install clang g++ pkg-config libgtk-3-dev xvfb xauth
-xvfb-run -a node tools/test-linux-aot.mjs --rebuild
+node tools/test-linux-aot.mjs --rebuild
 node tools/embed-linux-aot-runtime.mjs artifacts/linux-aot/runtime reports/linux-aot/validation.json
 node tools/build-linux-native.mjs
 npm run build:update-ide-artifacts
