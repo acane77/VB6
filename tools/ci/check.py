@@ -102,6 +102,15 @@ def audit(root=ROOT):
         for script in scripts:
             if not re.fullmatch(r'[a-z][a-z0-9_-]*\.py', script) or not (root / 'tools' / script).is_file():
                 raise ValueError('Invalid suite entrypoint: ' + script)
+    # The full DOS palette/DPR/runtime matrix needs its own three-engine job.
+    # Combining it with general authoring consumed the shared deadline before
+    # its final comparisons ran. Preserve deadlines and every assertion instead.
+    browser_groups = jobs['browser']['strategy']['matrix']['suite']
+    if 'tui-authoring' not in browser_groups or suites.get('tui-authoring') != ['dos-browser-tests.py']:
+        raise ValueError('Dedicated TUI acceptance partition required')
+    browser_scripts = [script for group in browser_groups for script in suites[group]]
+    if len(browser_scripts) != len(set(browser_scripts)):
+        raise ValueError('Browser partitions may not duplicate any test entrypoint')
     figma_scripts = [script for group in jobs['figma']['strategy']['matrix']['suite'] for script in suites[group]]
     if len(figma_scripts) != len(set(figma_scripts)):
         raise ValueError('Figma partitions may not duplicate any test entrypoint')

@@ -107,3 +107,26 @@ all standalone ESM, CLI, browser-bundle and archive assertions. The input closes
 on success, extraction failure and process-start failure; a bounded child timeout
 returns a failing result rather than accepting an incomplete package. Only locally
 built, trusted package archives belong in this harness.
+
+## DOS acceptance ownership
+
+The full DOS workspace, runtime and palette/DPR matrix runs in its own
+`tui-authoring` browser partition on Chromium, Firefox and WebKit. It no longer
+shares a deadline with the general `integration-authoring` scripts. All existing
+assertions, browser engines, per-job deadlines and the required `test` gate remain
+unchanged. The coverage audit rejects omission of this partition or duplicate
+entrypoint ownership among browser partitions.
+
+## Offline-origin qualification
+
+The export acceptance server stops its actual listening socket for every outage.
+A fresh worker-free client must fail against that origin; a newly opened client
+with the installed worker must receive a successful service-worker response and
+execute the exported application. No request interception or replacement response
+is used. Chromium and Firefox also enable browser offline emulation. WebKit
+qualifies origin unavailability without that flag because of
+[Playwright issue 42775](https://github.com/microsoft/playwright/issues/42775):
+the flag can reject requests before service-worker fetch dispatch. This is not
+certification that WebKit's offline emulation works. The report records the
+transport distinction, worker response and negative control explicitly. All
+update, cache isolation, integrity, actual ZIP and network-only API checks remain.

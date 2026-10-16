@@ -225,6 +225,7 @@ jobs:
         suite:
           - integration-controls
           - integration-authoring
+          - tui-authoring
           - intelligent-ui
           - project-authoring
     steps:

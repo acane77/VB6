@@ -46,6 +46,7 @@ class WorkflowAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Duplicate YAML'):check.audit(self.root)
     def test_path_filtered_required_workflow_rejected(self):self.reject(lambda w:w['on'].update({'pull_request':{'paths':['src/**']}}))
     def test_unowned_suite_rejected(self):self.reject(lambda w:w['jobs']['browser']['strategy']['matrix']['suite'].remove('intelligent-ui'))
+    def test_missing_tui_partition_rejected(self):self.reject(lambda w:w['jobs']['browser']['strategy']['matrix']['suite'].remove('tui-authoring'))
     def test_missing_project_authoring_rejected(self):self.reject(lambda w:w['jobs']['browser']['strategy']['matrix']['suite'].remove('project-authoring'))
     def test_dependency_cycle_rejected(self):self.reject(lambda w:w['jobs']['hygiene'].update({'needs':['test']}))
 if __name__=='__main__':unittest.main(verbosity=2)

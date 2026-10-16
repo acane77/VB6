@@ -256,7 +256,7 @@ VB6_ORIGIN=file python tools/dos-browser-tests.py
 python tools/browser-tui-advanced-tests.py
 ```
 
-The DOS suite belongs to the existing cross-engine `integration-authoring` group;
+The DOS suite belongs to the dedicated cross-engine `tui-authoring` group;
 optional-editor TUI tests belong to `advanced-editor`. The state matrix covers
 four palettes and device scales 1, 1.25 and 2, including alternate cell metrics.
 Assertions exercise real controls, source typing/undo, selections, debugger rows,
