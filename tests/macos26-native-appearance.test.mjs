@@ -29,8 +29,8 @@ for(const compile of [compileMacOS,compileMacOSAOT]) {
       ['PictureBox',{MacOSControlSize:'small'},'MAC261'],
       ['ProgressBar',{MacOSForegroundRole:'controlAccentColor'},'MAC261'],
       ['CommandButton',{MacOSControlStyle:'borderless',MacOSBackgroundRole:'windowBackgroundColor'},'MAC261'],
-      ['CheckBox',{MacOSControlStyle:'switch',Value:2},'MAC263'],
-      ['CheckBox',{MacOSControlStyle:'switch',Value:0.5},'MAC263'],
+      ['CheckBox',{MacOSControlStyle:'switch',Value:2},380],
+      ['CheckBox',{MacOSControlStyle:'switch',Value:0.5},380],
       ['TabStrip',{MacOSMaterial:'sidebar'},'MAC261'],
       ['TextBox',{MacOSControlStyle:'search',MultiLine:-1},'MAC260'],
       ['TextBox',{MacOSControlStyle:'search',PasswordChar:'*'},'MAC260'],
@@ -38,7 +38,9 @@ for(const compile of [compileMacOS,compileMacOSAOT]) {
       ['Label',{MacOSIndeterminate:-1},'MAC260'],
       ['Label',{MacOSForegroundRole:'unknown'},'MAC260'],
       ['Label',{MacOSUnknownStyle:'invented'},'MAC260']
-    ]) assert.throws(()=>compile(project(type,properties)),e=>e.diagnostics?.some(d=>d.code===code)||code==='MAC260'&&e.number===380,JSON.stringify(properties));
+    ]) assert.throws(()=>compile(project(type,properties)),e=>code===380
+      ? e.number===380&&/Switches require the binary CheckBox Value 0 or 1/.test(e.message)
+      : e.diagnostics?.some(d=>d.code===code)||code==='MAC260'&&e.number===380,JSON.stringify(properties));
     assert.doesNotThrow(()=>compile(project('CommandButton',{MacOSControlSize:'extraLarge'}),{minimumVersion:'26.0'}));
   });
 

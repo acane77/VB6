@@ -64,6 +64,21 @@ function paint(c,node,key,value) {
   (c.macos26Paint ||= []).push({node,key,value:node.style[key],previous});
 }
 
+/** DOM input changes deliberately skip the ordinary painter, so accessibility
+ * state follows the original value path immediately without another VB event. */
+export function refreshMacOS26ControlValue(c) {
+  const p = c.props;
+  if (c.type === 'CheckBox') {
+    const mixed = Number(p.Value) === 2, toggle = p.MacOSControlStyle === 'switch' && !mixed;
+    writeThemeAttributes(c.input,{role:toggle ? 'switch' : null,'aria-checked':toggle ? String(!!Number(p.Value)) : null});
+  }
+  if (c.type === 'ProgressBar') {
+    writeThemeAttributes(c.node,{role:'progressbar','aria-valuemin':Number(p.Min) || 0,'aria-valuemax':Number(p.Max) || 0,
+      'aria-valuenow':p.MacOSIndeterminate === -1 ? null : Number(p.Value) || 0});
+    if (p.MacOSIndeterminate === -1) c.fill.style.width = 'var(--macos26-IndeterminateWidth, 30%)';
+  }
+}
+
 /** Called after the ordinary painter, so explicit bindings replace only the
  * intended role. Clearing metadata restores the ordinary paint on next refresh. */
 export function refreshMacOS26Control(c) {
@@ -102,17 +117,7 @@ export function refreshMacOS26Control(c) {
     if (c.macos26Search) {c.macos26Search.icon.hidden = !search;c.macos26Search.update();}
     writeThemeAttributes(c.input,{role:search ? 'searchbox' : null});
   }
-  if (c.type === 'CheckBox') {
-    // ARIA switches cannot represent mixed state; retain checkbox semantics for
-    // VB6's third state instead of falsely exposing it as an enabled switch.
-    const mixed = Number(p.Value) === 2, toggle = p.MacOSControlStyle === 'switch' && !mixed;
-    writeThemeAttributes(c.input,{role:toggle ? 'switch' : null,'aria-checked':toggle ? String(!!Number(p.Value)) : null});
-  }
-  if (c.type === 'ProgressBar') {
-    writeThemeAttributes(n,{role:'progressbar','aria-valuemin':Number(p.Min) || 0,'aria-valuemax':Number(p.Max) || 0,
-      'aria-valuenow':p.MacOSIndeterminate === -1 ? null : Number(p.Value) || 0});
-    if (p.MacOSIndeterminate === -1) c.fill.style.width = 'var(--macos26-IndeterminateWidth, 30%)';
-  }
+  refreshMacOS26ControlValue(c);
 }
 
 export function disposeMacOS26Control(c) {c.macos26Search?.dispose();c.macos26Search = null;}

@@ -95,3 +95,26 @@ export function macos26Resource(role, scheme = 'light') {
   if (scheme !== 'light' && scheme !== 'dark') throw new TypeError('Unknown macOS 26 appearance: ' + String(scheme));
   return MACOS26_RESOURCES[scheme][role];
 }
+
+/** Retained graphics store a bounded scalar, never a live control or caller
+ * object. The captured role and OLE fallback remain fixed; the palette is
+ * resolved at replay time, just like ordinary OLE system colors. This internal
+ * token is not CSS and must be resolved before assigning a paint property. */
+export function macos26ColorToken(role, fallback) {
+  if (typeof role !== 'string') throw new TypeError('A macOS graphics color role must be a string.');
+  const defaultColor = macos26ColorFallback(role);
+  if (fallback === undefined) fallback = defaultColor;
+  if (typeof fallback !== 'number' || !Number.isInteger(fallback) || fallback < -0x80000000 || fallback > 0xffffffff)
+    throw new TypeError('A macOS graphics color fallback must be an OLE_COLOR integer.');
+  return `macos26-color:${role}:${fallback >>> 0}`;
+}
+
+/** Malformed or unknown tokens follow colorValue's ordinary invalid-color
+ * fallback. Strict decoding also keeps role names out of arbitrary CSS. */
+export function readMacOS26ColorToken(value) {
+  if (typeof value !== 'string' || value.length > 96 || !value.startsWith('macos26-color:')) return null;
+  const match = /^macos26-color:([A-Za-z][A-Za-z0-9]{0,63}):(0|[1-9][0-9]{0,9})$/.exec(value);
+  if (!match || match[0] !== value || !Object.hasOwn(MACOS26_COLOR_ROLES,match[1])) return null;
+  const fallback = Number(match[2]);
+  return fallback <= 0xffffffff ? Object.freeze({role:match[1],fallback}) : null;
+}

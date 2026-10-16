@@ -121,7 +121,7 @@ export function macos26AccessibilityCss(kind) {
   if (kind !== 'application' && kind !== 'ide') throw new TypeError('Unknown macOS CSS ownership scope');
   const ide = kind === 'ide', prefix = ide ? 'ide' : 'vb';
   const base = ide ? 'html[data-ide-theme-family="macos26"]' : '[data-vb-theme-family="macos26"]';
-  const portal = ' :where(.classic-menu:not(.runtime-popup),.classic-tooltip,.property-color-popup)';
+  const portal = ' :where(.classic-menu:not(.runtime-popup),.classic-tooltip:not(.runtime-tooltip),.property-color-popup)';
   const selectors = suffix => base + suffix + (ide ? ',\n' + base + suffix + portal : '');
   const rule = (selector,values) => `${selector} {\n${Object.entries(values).map(([key,value]) => ` --macos26-${key}: ${value};\n`).join('')}}\n`;
   let css = '\n/* macOS semantic accessibility at local ownership boundaries. */\n';

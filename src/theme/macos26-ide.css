@@ -96,7 +96,7 @@ html[data-ide-theme-family="macos26"]:not([data-ide-theme-family="classic"]) {
  & .classic-menu:not(.runtime-popup) .popup-menu-item.menu-selected:not([aria-disabled=true]) {background:var(--macos26-selectedContentBackgroundColor);color:var(--macos26-selectedTextColor);}
  & .classic-menu:not(.runtime-popup) .popup-menu-item[aria-disabled=true] {color:var(--macos26-disabledControlTextColor);}
  & .classic-menu:not(.runtime-popup) .menu-shortcut {font-variant-numeric:tabular-nums;opacity:.75;}
- & :is(.classic-tooltip,.source-info,.source-data-tip,.property-color-popup) {background:var(--macos26-PopoverMaterial);color:var(--macos26-labelColor);border-color:var(--macos26-Hairline);border-radius:8px;box-shadow:var(--ide-shadow);}
+ & :is(.classic-tooltip:not(.runtime-tooltip),.source-info,.source-data-tip,.property-color-popup) {background:var(--macos26-PopoverMaterial);color:var(--macos26-labelColor);border-color:var(--macos26-Hairline);border-radius:8px;box-shadow:var(--ide-shadow);}
 
  & .ide-dialog {border:1px solid var(--macos26-GlassStroke);border-radius:20px;background:var(--macos26-SheetMaterial);overflow:hidden;}
  & .ide-dialog .dialog-caption {min-height:36px;background:transparent;color:var(--macos26-labelColor);border-bottom-color:transparent;padding-inline:14px;}

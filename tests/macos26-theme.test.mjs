@@ -61,6 +61,7 @@ test('accessibility is rebound on local roots and IDE portal palettes', () => {
   assert.match(app,/data-vb-increase-contrast="true"/);
   assert.match(ide,/data-ide-increase-contrast="true"/);
   assert.match(ide,/\.classic-menu:not\(\.runtime-popup\)/);
+  assert.match(ide,/\.classic-tooltip:not\(\.runtime-tooltip\)/);
   for (const css of [app,ide]) {
     for (const condition of ['prefers-reduced-transparency:reduce','prefers-reduced-motion:reduce','prefers-contrast:more','forced-colors:active','@supports not']) assert.ok(css.includes(condition),condition);
     for (const name of ['Sidebar','Inspector','Titlebar','Toolbar','Menu','Popover','Sheet','Hud']) assert.ok(css.includes(`--macos26-${name}Material: var(--macos26-${name}Opaque);`),name);
@@ -81,6 +82,7 @@ test('indeterminate paint is bounded and its reduced-motion frame cannot look co
     assert.ok(Math.abs((116.6667 / 100 * width) - (100 - width) / 2) < .001);
   }
   assert.match(read('src/theme/macos26-controls.css'),/@keyframes macos26-progress/);
+  assert.match(read('src/theme/macos26-controls.css'),/\.vb-control\[data-macos-indeterminate="true"\]>\.vb-progress>\.vb-progress-fill/,'State belongs to the runtime control host, not the inner progress track');
 });
 
 test('palette generators include semantic roles in application and IDE outputs independently', () => {
@@ -92,4 +94,13 @@ test('palette generators include semantic roles in application and IDE outputs i
   }
   assert.ok(app.endsWith(macos26AccessibilityCss('application')));
   assert.ok(ide.endsWith(macos26AccessibilityCss('ide')));
+});
+
+test('every IDE tooltip painter and generated palette respects runtime portal ownership', () => {
+  for (const source of ['src/theme/ide-themes.css','src/theme/winui-ide.css','src/theme/macos26-ide.css']) {
+    const css=read(source);
+    assert.match(css,/\.classic-tooltip:not\(\.runtime-tooltip\)/,source);
+    assert.doesNotMatch(css,/\.classic-tooltip(?!:not\(\.runtime-tooltip\))/,source);
+  }
+  assert.doesNotMatch(renderIdeThemePalettes(),/\.classic-tooltip(?!:not\(\.runtime-tooltip\))/);
 });

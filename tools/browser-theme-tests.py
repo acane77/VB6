@@ -79,6 +79,74 @@ class Themes(X11IdeChecks, unittest.TestCase):
     def direct_theme(self, theme, **preferences):
         self.page.evaluate('a=>{Object.assign(vb6Studio.appearance,a);vb6Studio.applyAppearance();}',{'theme':theme,**preferences})
         self.page.wait_for_timeout(130)
+    def test_tooltips_keep_application_and_ide_ownership(self):
+        before=self.page.evaluate('JSON.stringify(vb6Studio.project)')
+        control_id=self.page.evaluate('''()=>{
+          const designer=vb6Studio.documents.designers.values().next().value;
+          const control=designer.formView.controls.find(c=>c.type==='CommandButton');
+          control.ToolTipText='Application-owned help';control.refresh();
+          return control.model.id;
+        }''')
+        control=self.page.locator('[data-control-id="'+control_id+'"]')
+        paint='''e=>{const s=getComputedStyle(e);return {
+          background:s.backgroundColor,color:s.color,radius:s.borderRadius,
+          border:s.borderTopColor,padding:s.padding,font:s.font,shadow:s.boxShadow};}'''
+        baseline=None
+        for theme in ['classic',*THEMES]:
+            self.page.mouse.move(0,0)
+            self.direct_theme(theme,reduceTransparency=True,increaseContrast=True)
+            control.hover()
+            tip=self.page.get_by_role('tooltip',exact=True)
+            tip.wait_for(state='visible')
+            self.assertIn('runtime-tooltip',tip.get_attribute('class'))
+            self.assertEqual(tip.get_attribute('data-vb-theme'),'classic')
+            self.assertEqual(tip.get_attribute('data-vb-theme-family'),'classic')
+            self.assertEqual(tip.get_attribute('data-vb-increase-contrast'),'false')
+            current=tip.evaluate(paint)
+            self.assertEqual(current['background'],'rgb(255, 255, 225)')
+            if baseline is None: baseline=current
+            self.assertEqual(current,baseline,theme+' must preserve application tooltip paint')
+            self.record(theme,applicationTooltipIsolated=True)
+
+        # The body portal follows its application host live, including explicit
+        # accessibility preferences, without replacing the tooltip or the control.
+        apply_application='''appearance=>vb6Studio.documents.designers.values().next().value.themeController.apply(appearance)'''
+        tip_handle=tip.element_handle()
+        self.page.evaluate(apply_application,{'theme':'macos26','themeOptions':{}})
+        self.assertEqual(tip.get_attribute('data-vb-theme'),'macos26')
+        self.assertEqual(tip.get_attribute('data-vb-theme-family'),'macos26')
+        self.assertEqual(tip.get_attribute('data-vb-reduce-transparency'),'false')
+        self.assertEqual(tip.get_attribute('data-vb-increase-contrast'),'false')
+        self.assertEqual(tip.evaluate(paint)['background'],'rgb(251, 251, 251)')
+        self.assertEqual(tip.evaluate(paint)['radius'],'6px')
+        self.page.evaluate(apply_application,{'theme':'macos26-dark','themeOptions':{
+            'reduceTransparency':True,'reduceMotion':True,'increaseContrast':True}})
+        self.assertTrue(tip_handle.evaluate('e=>e===document.querySelector(".classic-tooltip")'))
+        for name in ['reduce-transparency','reduce-motion','increase-contrast']:
+            self.assertEqual(tip.get_attribute('data-vb-'+name),'true')
+        self.assertEqual(tip.evaluate(paint)['background'],'rgb(45, 45, 45)')
+        self.assertEqual(tip.evaluate('e=>getComputedStyle(e).boxShadow'),'none')
+        self.page.screenshot(path=str(REPORT/'macos26-application-tooltip.png'))
+        self.page.mouse.move(0,0)
+        self.assertEqual(self.page.get_by_role('tooltip',exact=True).count(),0)
+        self.assertEqual(control.get_attribute('title'),'Application-owned help')
+        self.assertIsNone(control.get_attribute('data-classic-tooltip'))
+        self.page.evaluate(apply_application,{'theme':'x11','themeOptions':{}})
+        self.assertEqual(tip_handle.get_attribute('data-vb-theme'),'macos26-dark','Closing releases the local theme listener')
+
+        # IDE chrome retains the IDE palette even though legacy portal attributes
+        # identify the Classic runtime boundary on the document element.
+        self.direct_theme('macos26-dark',reduceTransparency=True)
+        self.page.locator('.command-bar .tool-button').first.hover()
+        ide_tip=self.page.get_by_role('tooltip',exact=True)
+        ide_tip.wait_for(state='visible')
+        self.assertNotIn('runtime-tooltip',ide_tip.get_attribute('class'))
+        self.assertEqual(ide_tip.evaluate('e=>getComputedStyle(e).getPropertyValue("--vb-window").trim()'),
+                         self.page.locator('html').evaluate('e=>getComputedStyle(e).getPropertyValue("--vb-window").trim()'))
+        self.assertEqual(ide_tip.evaluate(paint)['background'],'rgb(45, 45, 45)')
+        self.page.screenshot(path=str(REPORT/'macos26-ide-tooltip.png'))
+        self.assertEqual(self.page.evaluate('JSON.stringify(vb6Studio.project)'),before)
+        self.record('tooltip ownership',liveApplicationBinding=True,preferencesCopied=True,releaseOnClose=True,ideTooltipPalette=True)
     def test_all_theme_options_preserve_authored_form_and_project(self):
         before=self.page.evaluate('JSON.stringify(vb6Studio.project)')
         undo=self.page.evaluate('vb6Studio.history.undoStack.length')

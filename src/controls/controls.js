@@ -1,5 +1,5 @@
 import {MACOS26_PROPERTIES,MACOS26_PROPERTY_DEFAULTS,validateMacOS26Properties,clearMacOS26ColorRoles} from '../theme/macos26-compat.js';
-import {refreshMacOS26Control,resetMacOS26ControlPaint,disposeMacOS26Control} from './macos26.js';
+import {refreshMacOS26Control,refreshMacOS26ControlValue,resetMacOS26ControlPaint,disposeMacOS26Control} from './macos26.js';
 import {notifyControlPaint,bindControlPaintProperties} from '../rendering/invalidation.js';
 import {controlSize,controlSystem,graphicsProperty,drawControl,printControl,measureControl,scaleControl,scaleLength,paintControlPicture} from '../graphics/control-graphics.js';
 import {finite} from '../graphics/contract.js';
@@ -125,7 +125,7 @@ export class BrowserControl {
     if(key==='Text'&&this.type==='ComboBox'){const i=this.items.indexOf(String(value));this.props.ListIndex=i;}
     if(this.type==='Timer'&&['Interval','Enabled'].includes(key))this.updateTimer();
     if(this.rich&&['Locked','Enabled','MaxLength'].includes(key)){this.rich.readOnly=this.design||truth(this.props.Locked)||!truth(this.props.Enabled);this.rich.maxLength=Number(this.props.MaxLength)||0;}
-    if(!fromDOM)this.invalidate();
+    if(!fromDOM)this.invalidate();else if(key==='Value')refreshMacOS26ControlValue(this);
     if(key==='Text'||key==='Value'&&!['CheckBox','OptionButton','ProgressBar'].includes(this.type))this.event('Change');
     if(key==='ListIndex'&&!fromDOM)this.event('Click');
   }
