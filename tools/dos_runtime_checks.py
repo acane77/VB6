@@ -82,14 +82,21 @@ def run_runtime_checks(browser, root, report, seed):
           window.originalInput=control(a,'TextBoxTest').input;
           assertTUI(control(a,'TextBoxTest').get('Text')==='Live native editor','input did not update VB6');
           control(a,'CommandButtonTest').SetFocus();
-          control(a,'TextBoxTest').set('Text','Property-only repaint');
         }''')
+        # Establish a common native viewport, then drain the focus/scroll paint.
+        # Firefox retains scrollLeft on blur. The property assertion below must
+        # not assume it resets, or accidentally pass on a pending focus repaint.
+        page.evaluate('originalInput.scrollLeft=0')
+        page.wait_for_function('a.tuiPresentation.frame===0')
+        page.evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+        page.evaluate("control(a,'TextBoxTest').set('Text','Property-only repaint')")
         page.wait_for_function('a.tuiPresentation.controls.get(control(a,"TextBoxTest").node).buffer.toText().includes("Property-only")')
         checked('materialization invalidation paints .value changes without input events', '''() => {
           assertTUI(control(a,'TextBoxTest').input===originalInput,'input was replaced');
           const node=control(a,'TextBoxTest').node,entry=a.tuiPresentation.controls.get(node);
           assertTUI(entry.buffer.columns===Math.ceil(node.clientWidth/8),'wrong column quantization');
-          assertTUI(parseFloat(entry.canvas.style.width)===entry.buffer.columns*8,'cell pitch was stretched');
+          assertTUI(entry.painter.cellWidth===8&&parseFloat(entry.canvas.style.width)===node.clientWidth,'cell viewport was stretched');
+          assertTUI(entry.canvas.width===Math.round(node.clientWidth*devicePixelRatio),'partial cells were not clipped in the backing bitmap');
           assertTUI(entry.canvas.style.clipPath.includes('inset'),'partial cells are not clipped');
           assertTUI(!a.tuiPresentation.snapshot().some(s=>s.glyphs.map(n=>String.fromCodePoint(n)).join('').includes('secret-password')),'password leaked into snapshot');
         }''')

@@ -90,6 +90,16 @@ def run_precision_checks(browser, root, report):
             check(painter.strips.every((canvas,i)=>equal(pixels(canvas),before[i])),'restored frame has stale or clipped pixels');
             results.push({kind:'frame-retry',dpr,exact:true});painter.dispose();
           }
+          for(const dpr of [1,1.25,2])for(const opaque of [true,false]){
+            const buffer=new CellBuffer(16,3);buffer.frame(0,0,16,3);buffer.put(2,1,'A',14,1,3);
+            const full=document.createElement('canvas'),clipped=document.createElement('canvas');
+            const a=new CanvasCellRenderer(full,{cellWidth:9,cellHeight:18,opaque}),b=new CanvasCellRenderer(clipped,{cellWidth:9,cellHeight:18,opaque});
+            a.render(buffer,dpr);buffer.invalidate();b.setExtent(137,43);b.render(buffer,dpr);
+            check(clipped.width===Math.round(137*dpr)&&clipped.height===Math.round(43*dpr),'viewport extent differs');
+            const expected=Array.from(full.getContext('2d').getImageData(0,0,clipped.width,clipped.height).data);
+            check(equal(pixels(clipped),expected),'partial viewport stretched its cell lattice');
+            results.push({kind:'viewport-crop',dpr,opaque,exact:true});a.dispose();b.dispose();
+          }
           return results;
         }''')
         checks = reference_checks()

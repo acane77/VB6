@@ -117,6 +117,13 @@ def run_fidelity_checks(browser, root, report):
                 page.evaluate('''()=>{
                   const entry=presenter.chrome.entries.get(output);
                   assertTUI(entry.state.transcript&&!entry.fallback,'Immediate output not projected');
+                  // An inert paint layer must not create native scrollbars or
+                  // enlarge scroll extent. Compare with its paint hidden while
+                  // retaining the exact same DOM text and DOS font metrics.
+                  const geometry=()=>[output.clientWidth,output.clientHeight,output.scrollWidth,output.scrollHeight];
+                  const painted=JSON.stringify(geometry());entry.canvas.style.display='none';
+                  const native=JSON.stringify(geometry());entry.canvas.style.removeProperty('display');
+                  assertTUI(painted===native,'transcript canvas changed native scroll extent: '+painted+' != '+native);
                   const selection=document.getSelection(),range=document.createRange();
                   range.setStart(output.firstChild,output.textContent.lastIndexOf('transcript line 79'));
                   range.setEnd(output.firstChild,output.firstChild.length);selection.removeAllRanges();selection.addRange(range);
@@ -158,7 +165,12 @@ def run_fidelity_checks(browser, root, report):
                 results.append({'profile': profile, 'dpr': dpr, 'metrics': metrics, 'dialog': dialog, 'passed': True})
             except Exception:
                 page.screenshot(path=str(report / ('fidelity-failure-' + label + '.png')))
-                (report / ('fidelity-failure-' + label + '.json')).write_text(json.dumps({'errors': errors, 'previous': results}, indent=2))
+                (report / ('fidelity-failure-' + label + '.json')).write_text(json.dumps({'errors': errors, 'previous': results, 'transcript': page.evaluate('''()=>{
+                  const n=window.output,e=n&&window.presenter?.chrome.entries.get(n),s=document.getSelection(),r=s?.rangeCount?s.getRangeAt(0):null;
+                  return n?{client:[n.clientWidth,n.clientHeight],scroll:[n.scrollWidth,n.scrollHeight,n.scrollLeft,n.scrollTop],
+                    cells:e?.buffer?.toText(),selected:e?.state?.items.filter(i=>i.selected),
+                    selection:r?{start:r.startContainer.nodeName,startOffset:r.startOffset,end:r.endContainer.nodeName,endOffset:r.endOffset,text:s.toString()}:null}:null;
+                }''')}, indent=2))
                 raise
             finally:
                 page.close()
