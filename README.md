@@ -175,6 +175,19 @@ The desktop IDE detaches and restores live tool/code panes through native window
 
 See [Direct Win32/AOT contract, examples and SDK](docs/WIN32-AOT.md), [Windows targets](docs/WINDOWS-BUILDS.md), and [Desktop validation](docs/NATIVE-VALIDATION.md). Full VB6 AOT parity, all-GPU rendering, COM/OCX/full Declare ABI and existing-binary browser emulation remain unfinished.
 
+### Native Linux GTK export
+
+**File → Make Project (Linux GTK AOT)…** produces a native Linux x86-64 ELF application ZIP directly in the IDE, including offline. The shared VB6 native compiler emits project machine code; the application uses GTK 3.24 controls, the portable native VB6 runtime, and system libraries. It runs without Node.js, a browser, Wine, or a VB interpreter.
+
+```sh
+npm run build:linux-package
+npm run build:linux -- examples/calculator.vb6web --out NativeOutput
+# Or write a fresh application directory with bin/NAME and Resources/:
+npm run build:linux -- examples/calculator.vb6web --out NativeApplications --extract
+```
+
+The first runtime targets Ubuntu 24.04-compatible Linux x86-64 with GTK 3.24 and glibc 2.39 or newer. O0–O3 project optimization, native resources, deterministic executable ZIPs, standalone package APIs and the `linux` MCP build target share the same exporter. See [Linux AOT architecture, usage and validation](docs/LINUX-AOT.md) and the [reusable Linux package](packages/linux-native/README.md).
+
 ### Reusable Win32 browser compatibility
 
 Browser IDE runs, the runtime SDK and published single-file HTML apps share [`@vb6/win32-browser`](packages/win32-browser/README.md), an independent, zero-dependency MIT package. It provides common kernel/memory/file/INI, registry, window/message/timer, clipboard, GDI and safe URL operations.
