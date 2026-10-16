@@ -60,7 +60,9 @@ with sync_playwright() as pw:
             page.on('pageerror', lambda error: errors.append(str(error)))
             if origin == 'http':
                 page.route(ORIGIN + '/**', lambda route: route.fulfill(content_type='text/html', body=(ROOT/'dist/VB6-Studio-Web.html').read_text()))
-            page.goto(ORIGIN + '/' if origin == 'http' else (ROOT/'dist/VB6-Studio-Web.html').as_uri())
+            # Use actual IDE readiness for both origins; WebKit file navigation
+            # can keep its load event pending after the application is usable.
+            page.goto(ORIGIN + '/' if origin == 'http' else (ROOT/'dist/VB6-Studio-Web.html').as_uri(), wait_until='commit')
             page.wait_for_function('!!globalThis.vb6Studio?.linuxExportInstalled')
             page.evaluate('project => vb6Studio.loadProject(VB6StudioAPI.normalizeProject(project))', fixture)
             before = page.evaluate('JSON.stringify(vb6Studio.project)')
