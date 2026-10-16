@@ -133,7 +133,7 @@ with sync_playwright() as pw:
                 page.evaluate('__linuxDigest.pending()')
                 if action == 'change':
                     page.wait_for_function('vb6Studio.lastLinuxBuild?.success === false')
-                    check(origin + ': stale project rejected', 'changed' in page.get_by_role('status').filter(has_text='Project changed').inner_text().lower())
+                    check(origin + ': stale project rejected', 'changed' in page.get_by_role('dialog', name='Make Linux GTK Application').get_by_role('status').inner_text().lower())
                     close_dialog()
                 else:
                     # A microtask and two frames cover publication after the digest.
