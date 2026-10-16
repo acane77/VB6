@@ -89,7 +89,7 @@ export class BrowserControl {
   }
   set(key,value,fromDOM=false){
     if(this.disposed)return;
-    if(MACOS26_PROPERTIES.includes(key)||['MultiLine','PasswordChar'].includes(key)){try{validateMacOS26Properties({...this.props,[key]:value},this.type);}catch(error){throw new VBError(error.message,380);}}
+    if(MACOS26_PROPERTIES.includes(key)||['MultiLine','PasswordChar'].includes(key)||key==='Value'&&this.props.MacOSControlStyle==='switch'){try{validateMacOS26Properties({...this.props,[key]:value},this.type);}catch(error){throw new VBError(error.message,380);}}
     if(key==='BackColor'||key==='ForeColor'){const role=key==='BackColor'?'MacOSBackgroundRole':'MacOSForegroundRole';if(this.props[role]){clearMacOS26ColorRoles(this.props,{[key]:value});this.invalidate();}}
     if(setTabProperty(this,key,value))return;
     if(graphicsProperty(this,key,value))return;

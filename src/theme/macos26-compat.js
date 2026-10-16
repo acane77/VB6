@@ -50,6 +50,8 @@ export function validateMacOS26Property(key, value, type, properties = {}) {
   if (key.endsWith('Role') && value) macos26ColorFallback(value);
   if (key === 'MacOSControlStyle' && value === 'search' && (Number(properties.MultiLine) || properties.PasswordChar))
     throw new TypeError('Search fields require a single-line, non-password TextBox.');
+  if (key === 'MacOSControlStyle' && value === 'switch' && ![0,1].includes(Number(properties.Value ?? 0)))
+    throw new TypeError('Switches require the binary CheckBox Value 0 or 1.');
   if (key === 'PlaceholderText' && !['TextBox','ComboBox'].includes(type))
     throw new TypeError('PlaceholderText requires a TextBox or ComboBox.');
   const limit = key === 'MacOSAccessibilityIdentifier' ? 1024 : 16384;
