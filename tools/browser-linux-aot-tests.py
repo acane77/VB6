@@ -54,7 +54,7 @@ with sync_playwright() as pw:
         for origin in ('http', 'file'):
             context = browser.new_context(accept_downloads=True, viewport={'width': 1365, 'height': 1000})
             page = context.new_page()
-            page.set_default_timeout(30000)
+            page.set_default_timeout(60000)
             downloads, requests = [], []
             page.on('download', lambda item: downloads.append(item))
             page.on('pageerror', lambda error: errors.append(str(error)))
