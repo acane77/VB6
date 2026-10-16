@@ -12,7 +12,7 @@ const sessions = new WeakMap();
 export async function createPainter(name, canvas, options = {}) {
   if (name === 'webgpu') return WebGPUPainter.create(canvas, options);
   if (name === 'webgl2') return new WebGLPainter(canvas, options);
-  if (name === 'canvas2d') return new CanvasPainter(canvas);
+  if (name === 'canvas2d') return new CanvasPainter(canvas, options);
   if (name === 'html') return null;
   throw new TypeError('Unknown rendering backend: ' + name);
 }
@@ -83,8 +83,8 @@ export class UIRenderer {
     this.listen(this.view, 'pageshow', event => {
       if (event.persisted && !this.disposed) this.ready = this.setOptions(this.policy, {force: true});
     });
-    this.listen(this.view, 'beforeprint', () => { this.printing = true; if (this.canvas) this.canvas.style.visibility = 'hidden'; });
-    this.listen(this.view, 'afterprint', () => { this.printing = false; invalidate(); });
+    this.listen(this.view, 'beforeprint', () => { this.printing = true; this.cancelFrame(); if (this.canvas) this.canvas.style.visibility = 'hidden'; });
+    this.listen(this.view, 'afterprint', () => { this.printing = false; this.stylesDirty = true; this.retained.clear(); invalidate(); });
     this.listen(this.document.fonts, 'loadingdone', () => { this.atlas.reset(); this.stylesDirty = true; invalidate(); });
     this.forcedColors = this.view.matchMedia('(forced-colors: active)');
     this.listen(this.forcedColors, 'change', () => { this.ready = this.setOptions(this.policy, {force: true}); });
@@ -208,7 +208,7 @@ export class UIRenderer {
     this.resizeObserver?.disconnect(); this.observedElements.clear();
   }
   renderNow({force = false} = {}) {
-    if (this.disposed || !this.driver || this.printing) return;
+    if (this.disposed || !this.driver || this.printing || this.document.hidden) return;
     this.cancelFrame();
     const start = this.view.performance.now();
     // Sample active CSS/Web Animations on demand; once they finish or pause,
@@ -224,15 +224,23 @@ export class UIRenderer {
     const built = this.view.performance.now();
     const resized = this.canvas.width !== Math.round(scene.width * scene.dpr) || this.canvas.height !== Math.round(scene.height * scene.dpr);
     const painted = force || resized || plan.changed;
-    if (painted) { this.driver.render(plan.scene); this.metrics.frames++; }
-    else this.metrics.unchangedFrames++;
+    if (painted) {
+      try { this.driver.render(plan.scene); }
+      catch (error) {
+        // Direct callers may catch an error without invoking fallback(). Never
+        // skip their retry because RetainedScene already recorded this plan.
+        this.retained.clear(); this.canvas.style.visibility = 'hidden';
+        throw error;
+      }
+      this.metrics.frames++;
+    } else this.metrics.unchangedFrames++;
     const submitted = this.view.performance.now();
     this.metrics.sceneBuilds++;
     if (this.canvas.style.visibility !== 'visible') this.canvas.style.visibility = 'visible';
     this.metrics.builds.push(built - start); this.metrics.submissions.push(submitted - built);
     if (this.metrics.builds.length > 120) { this.metrics.builds.shift(); this.metrics.submissions.shift(); }
     this.metrics.last = {buildMs: built - start, submitCpuMs: submitted - built, submitted: painted, commands: scene.commands.length, dpr: scene.dpr, width: this.canvas.width, height: this.canvas.height, ...scene.stats};
-    if (animating) this.invalidate();
+    if (animating || this.atlas.needsCompaction) this.invalidate();
   }
   cancelFrame() { if (this.frame != null) this.view.cancelAnimationFrame(this.frame); this.frame = null; }
   publish() {
@@ -240,7 +248,7 @@ export class UIRenderer {
   }
   getStats() {
     const percentile = (array, quantile) => { if (!array.length) return 0; const sorted = [...array].sort((a, b) => a - b); return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * quantile))]; };
-    return {policy: normalizeRendering(this.policy), candidates: renderingCandidates(this.policy), countersScope: 'renderer-lifetime', timingsScope: 'active-backend', initializing: !!this.initializing, environment: renderingEnvironment(this.view), styleObservation: this.releaseStyleActivity?.capabilities || null, requested: this.policy.backend, active: this.backend, text: this.policy.text, forcedColors: this.forcedColors?.matches || false, attempts: JSON.parse(JSON.stringify(this.attempts)), adapter: this.driver?.adapterInfo ? JSON.parse(JSON.stringify(this.driver.adapterInfo)) : null,
+    return {policy: normalizeRendering(this.policy), candidates: renderingCandidates(this.policy), countersScope: 'renderer-lifetime', timingsScope: 'active-backend', initializing: !!this.initializing, environment: renderingEnvironment(this.view), styleObservation: this.releaseStyleActivity?.capabilities || null, requested: this.policy.backend, active: this.backend, text: this.policy.text, atlas: this.atlas?.getStats?.() || null, forcedColors: this.forcedColors?.matches || false, attempts: JSON.parse(JSON.stringify(this.attempts)), adapter: this.driver?.adapterInfo ? JSON.parse(JSON.stringify(this.driver.adapterInfo)) : null,
       frames: this.metrics.frames, redundantPointerOvers: this.metrics.redundantPointerOvers || 0, textStyleReuses: this.metrics.textStyleReuses || 0, sceneBuilds: this.metrics.sceneBuilds, unchangedFrames: this.metrics.unchangedFrames, invalidations: this.metrics.invalidations, buildP50Ms: this.driver ? percentile(this.metrics.builds, .5) : 0, buildP95Ms: this.driver ? percentile(this.metrics.builds, .95) : 0, submitCpuP50Ms: this.driver ? percentile(this.metrics.submissions, .5) : 0, submitCpuP95Ms: this.driver ? percentile(this.metrics.submissions, .95) : 0, last: this.driver && this.metrics.last ? JSON.parse(JSON.stringify(this.metrics.last)) : null, driver: this.driver ? {...this.driver.stats} : null};
   }
   releaseDriver() { this.metrics.builds.length = 0; this.metrics.submissions.length = 0; this.metrics.last = null; this.releaseStyleActivity?.(); this.releaseStyleActivity = null; this.observer?.disconnect(); this.disconnectResizeTargets(); this.observedElements.clear(); this.pointerTargets?.clear(); this.retained.clear(); this.adapter?.clear?.(); this.atlas?.reset?.(); this.animating = false; this.stylesDirty = true; this.driver?.dispose(); this.driver = null; this.canvas?.remove(); this.canvas = null; this.backend = 'html'; }

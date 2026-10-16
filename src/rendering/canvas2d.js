@@ -2,13 +2,18 @@ import {physicalSize} from './policy.js';
 import {rgbaCSS} from './scene.js';
 const same4 = (a, b) => a === b || !!(a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3]);
 export class CanvasPainter {
-  constructor(canvas) {
+  constructor(canvas, {onLost = () => {}, onRestored = () => {}} = {}) {
     this.canvas = canvas; this.context = canvas.getContext('2d', {alpha: true});
     if (!this.context) throw new Error('Canvas2D context unavailable');
+    this.lost = false; this.disposed = false;
+    this.contextLost = () => { if (!this.disposed && !this.lost) { this.lost = true; onLost('Canvas2D context lost'); } };
+    this.contextRestored = () => { if (!this.disposed && this.lost) { this.lost = false; onRestored(); } };
+    canvas.addEventListener?.('contextlost', this.contextLost); canvas.addEventListener?.('contextrestored', this.contextRestored);
     this.name = 'canvas2d'; this.stats = {frames: 0, drawCalls: 0, uploadedBytes: 0, clipChanges: 0, fillStyleChanges: 0};
   }
   render(scene) {
-    if (!this.context) throw new Error('Renderer disposed');
+    if (!this.context || this.disposed) throw new Error('Renderer disposed');
+    if (this.lost || this.context.isContextLost?.()) throw new Error('Canvas2D context lost');
     const size = physicalSize(scene.width, scene.height, scene.dpr);
     if (this.canvas.width !== size.width) this.canvas.width = size.width;
     if (this.canvas.height !== size.height) this.canvas.height = size.height;
@@ -44,5 +49,9 @@ export class CanvasPainter {
     this.stats.frames++; this.stats.drawCalls = scene.commands.length;
     this.stats.clipChanges = clipChanges; this.stats.fillStyleChanges = fillStyleChanges;
   }
-  dispose() { this.canvas.width = this.canvas.height = 1; this.context = null; }
+  dispose() {
+    if (this.disposed) return; this.disposed = true;
+    this.canvas.removeEventListener?.('contextlost', this.contextLost); this.canvas.removeEventListener?.('contextrestored', this.contextRestored);
+    this.canvas.width = this.canvas.height = 1; this.context = null;
+  }
 }

@@ -1,7 +1,8 @@
+import {textureUploadRegion, rememberTextureUpload} from './texture-updates.js';
 import {acquireDevice, deadline, subscribeDeviceLoss} from './device.js';
 import {physicalSize} from './policy.js';
 import {PaintScene} from './scene.js';
-import {encodeInstances, canReuseInstances, rememberInstances, prepareBatches} from './instances.js';
+import {encodeInstances, instanceUpdateRange, rememberInstances, prepareBatches, recordInstanceUpload} from './instances.js';
 // Clip/mode are constant for all vertices of an instance. Either provoking
 // vertex therefore preserves identical pixels and supports Compatibility mode.
 // https://gpuweb.github.io/gpuweb/wgsl/#interpolation
@@ -98,16 +99,32 @@ export class WebGPUPainter {
       const texture = this.device.createTexture({size: [page.width, page.height], format: 'rgba8unorm', usage: T.TEXTURE_BINDING | T.COPY_DST | T.RENDER_ATTACHMENT});
       record = {texture, width: page.width, height: page.height, revision: -1, group: this.device.createBindGroup({layout: this.imageLayout, entries: [{binding: 0, resource: texture.createView()}]})}; this.textures.set(page, record);
     }
-    if (record.revision !== page.revision || record.source !== page.canvas) {
-      this.device.queue.copyExternalImageToTexture({source: page.canvas}, {texture: record.texture, premultipliedAlpha: false}, [page.width, page.height]);
-      record.revision = page.revision; record.source = page.canvas; this.stats.uploadedBytes += page.width * page.height * 4;
+    const region = textureUploadRegion(page, record);
+    if (region) {
+      const {x, y, width, height} = region;
+      this.device.queue.copyExternalImageToTexture({source: page.canvas, origin: [x, y]},
+        {texture: record.texture, origin: [x, y], premultipliedAlpha: false}, [width, height]);
+      rememberTextureUpload(record, page, region, this.stats);
     }
     return record.group;
   }
-  render(scene, {readback = false, timing = null} = {}) {
+  render(scene, options = {}) {
+    if (this.disposed) throw new Error('Renderer disposed');
+    try { return this.renderFrame(scene, options); }
+    catch (error) {
+      // Synchronous encoding/submission failures invalidate cached uploads.
+      // Asynchronous validation/device loss still uses the onLost fallback;
+      // normal rendering never waits for the queue or polls GPU completion.
+      this.buffer?.destroy(); this.buffer = null;
+      this.data = this.encodedData = this.encodedScene = null;
+      this.screenUploaded = false;
+      for (const record of this.textures.values()) record.revision = -1;
+      throw error;
+    }
+  }
+  renderFrame(scene, {readback = false, timing = null} = {}) {
     const {groups, pages: usedPages} = prepareBatches(this, scene);
     for (const [page, record] of this.textures) if (!usedPages.has(page)) { record.texture.destroy(); this.textures.delete(page); }
-    if (this.disposed) throw new Error('Renderer disposed');
     const device = this.device, size = physicalSize(scene.width, scene.height, scene.dpr, device.limits.maxTextureDimension2D);
     if (this.canvas.width !== size.width) this.canvas.width = size.width;
     if (this.canvas.height !== size.height) this.canvas.height = size.height;
@@ -118,8 +135,8 @@ export class WebGPUPainter {
       this.buffer = device.createBuffer({size: this.capacity, usage: this.view.GPUBufferUsage.VERTEX | this.view.GPUBufferUsage.COPY_DST});
       this.data = new Float32Array(this.capacity / 4); this.stats.bufferAllocations++;
     }
-    const reuse = canReuseInstances(this, scene, size);
-    if (!reuse) { encodeInstances(scene.commands, this.data, size.scaleX, size.scaleY); this.stats.geometryPacks++; }
+    const update = instanceUpdateRange(this, scene, size), reuse = update.first === update.end;
+    if (!reuse) { encodeInstances(scene.commands, this.data, size.scaleX, size.scaleY, update.first, update.end); this.stats.geometryPacks++; }
     const images = new Map();
     for (const page of usedPages) images.set(page, this.image(page));
     const screen = this.screenData || (this.screenData = new Float32Array(4));
@@ -127,7 +144,10 @@ export class WebGPUPainter {
     if (!this.screenUploaded || values.some((v, i) => Math.fround(v) !== screen[i])) {
       screen.set(values); device.queue.writeBuffer(this.uniform, 0, screen); this.screenUploaded = true;
     }
-    if (count && !reuse) { this.stats.instanceUploads++; device.queue.writeBuffer(this.buffer, 0, this.data, 0, count * 24); this.stats.uploadedBytes += count * 96; }
+    if (!reuse) {
+      device.queue.writeBuffer(this.buffer, update.first * 96, this.data, update.first * 24, (update.end - update.first) * 24);
+      recordInstanceUpload(this.stats, update.first, update.end);
+    }
     rememberInstances(this, scene, size);
     const encoder = device.createCommandEncoder({label: 'VB6 UI frame'});
     const texture = this.context.getCurrentTexture();
@@ -180,11 +200,11 @@ export class WebGPUPainter {
     if (image.width !== 2 || image.height !== 2 || image.data.length !== expected.length || image.data.some((channel, index) => channel !== expected[index])) throw new Error('WebGPU output verification failed');
     this.stats.outputVerified = true;
     // Startup diagnostics must not inflate workload frames/uploads/allocations.
-    this.buffer?.destroy(); this.buffer = null; this.encodedScene = null; this.batchedScene = null; this.batches = null;
-    for (const name of ['frames','drawCalls','uploadedBytes','bufferAllocations','geometryPacks','instanceUploads','readbacks','batchBuilds']) this.stats[name] = 0;
+    this.buffer?.destroy(); this.buffer = null; this.encodedScene = null; this.batchedScene = null; this.batches = null; this.data = this.encodedData = null;
+    for (const name of ['frames','drawCalls','uploadedBytes','bufferAllocations','geometryPacks','instanceUploads','instanceUploadedBytes','textureUploadedBytes','textureUploads','partialTextureUploads','readbacks','batchBuilds']) this.stats[name] = 0;
   }
   disposeResources() {
-    this.unsubscribeLoss?.(); this.unsubscribeLoss = null; this.encodedScene = null; this.batchedScene = null; this.batches = null;
+    this.unsubscribeLoss?.(); this.unsubscribeLoss = null; this.encodedScene = null; this.batchedScene = null; this.batches = null; this.data = this.encodedData = null;
     this.device?.removeEventListener('uncapturederror', this.errorHandler);
     this.buffer?.destroy(); this.uniform?.destroy(); this.white?.destroy();
     for (const record of this.textures.values()) record.texture.destroy(); this.textures.clear();

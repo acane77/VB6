@@ -1,6 +1,7 @@
+import {textureUploadRegion, rememberTextureUpload} from './texture-updates.js';
 import {acquireWebGLContext} from './context.js';
 import {physicalSize} from './policy.js';
-import {encodeInstances, canReuseInstances, rememberInstances, prepareBatches} from './instances.js';
+import {encodeInstances, instanceUpdateRange, rememberInstances, prepareBatches, recordInstanceUpload} from './instances.js';
 const VERTEX = `#version 300 es
 precision highp float;
 layout(location=0) in vec4 rect; layout(location=1) in vec4 clipping;
@@ -50,13 +51,35 @@ export class WebGLPainter {
     if (!page) return this.white;
     const gl = this.gl; let record = this.textures.get(page);
     if (!record) { record = {texture: this.texture(), revision: -1}; this.textures.set(page, record); }
-    if (record.revision !== page.revision || record.source !== page.canvas || record.width !== page.width || record.height !== page.height) {
+    const region = textureUploadRegion(page, record);
+    if (region) {
       gl.bindTexture(gl.TEXTURE_2D, record.texture); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, page.canvas); record.revision = page.revision; record.source = page.canvas; record.width = page.width; record.height = page.height; this.stats.uploadedBytes += page.width * page.height * 4;
+      if (region.full) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, page.canvas);
+      else {
+        // WebGL2 can select a canvas subrectangle without getImageData(), a
+        // staging canvas, or reallocation. Always restore unpack state.
+        gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, region.x); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, region.y);
+        try { gl.texSubImage2D(gl.TEXTURE_2D, 0, region.x, region.y, region.width, region.height, gl.RGBA, gl.UNSIGNED_BYTE, page.canvas); }
+        finally { gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0); }
+      }
+      rememberTextureUpload(record, page, region, this.stats);
     }
     return record.texture;
   }
   render(scene) {
+    if (this.disposed || this.gl.isContextLost()) throw new Error('WebGL2 context lost');
+    try { return this.renderFrame(scene); }
+    catch (error) {
+      // WebGL reports allocation/upload errors through getError(), not throws.
+      // A failed frame must not publish its CPU data or resource cursors as a
+      // successful GPU cache: a later retry must allocate and upload again.
+      // https://registry.khronos.org/webgl/specs/latest/1.0/#5.14.9
+      this.data = this.encodedData = this.encodedScene = null;
+      for (const record of this.textures.values()) record.revision = -1;
+      throw error;
+    }
+  }
+  renderFrame(scene) {
     const {groups, pages: usedPages} = prepareBatches(this, scene);
     for (const [page, record] of this.textures) if (!usedPages.has(page)) { this.gl.deleteTexture(record.texture); this.textures.delete(page); }
     const gl = this.gl; if (this.disposed || gl.isContextLost()) throw new Error('WebGL2 context lost');
@@ -68,11 +91,14 @@ export class WebGLPainter {
     gl.useProgram(this.program); gl.uniform4f(this.uniform, scene.width, scene.height, size.scaleX, size.scaleY); gl.bindVertexArray(this.vao); gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
     const required = Math.max(24, scene.commands.length * 24);
     if (!this.data || this.data.length < required) { this.data = new Float32Array(Math.max(1024, 2 ** Math.ceil(Math.log2(required)))); gl.bufferData(gl.ARRAY_BUFFER, this.data.byteLength, gl.DYNAMIC_DRAW); this.stats.bufferAllocations++; }
-    const reuse = canReuseInstances(this, scene, size);
-    if (!reuse) { encodeInstances(scene.commands, this.data, size.scaleX, size.scaleY); this.stats.geometryPacks++; }
-    const at = scene.commands.length * 24, images = new Map();
+    const update = instanceUpdateRange(this, scene, size), reuse = update.first === update.end;
+    if (!reuse) { encodeInstances(scene.commands, this.data, size.scaleX, size.scaleY, update.first, update.end); this.stats.geometryPacks++; }
+    const images = new Map();
     for (const page of usedPages) images.set(page, this.image(page));
-    if (at && !reuse) { gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.data.subarray(0, at)); this.stats.uploadedBytes += at * 4; this.stats.instanceUploads++; }
+    if (!reuse) {
+      gl.bufferSubData(gl.ARRAY_BUFFER, update.first * 96, this.data.subarray(update.first * 24, update.end * 24));
+      recordInstanceUpload(this.stats, update.first, update.end);
+    }
     rememberInstances(this, scene, size);
     for (const group of groups) {
       group.hole ? gl.disable(gl.BLEND) : gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); gl.bindTexture(gl.TEXTURE_2D, group.page ? images.get(group.page) : this.white);
@@ -90,7 +116,7 @@ export class WebGLPainter {
     this.stats.frames++; this.stats.drawCalls = groups.length; this.stats.atlasPages = this.textures.size;
   }
   dispose() {
-    if (this.disposed) return; this.disposed = true; this.encodedScene = null; this.batchedScene = null; this.batches = null; this.canvas.removeEventListener('webglcontextlost', this.lost);
+    if (this.disposed) return; this.disposed = true; this.encodedScene = null; this.batchedScene = null; this.batches = null; this.data = this.encodedData = null; this.canvas.removeEventListener('webglcontextlost', this.lost);
     const gl = this.gl; if (!gl) return;
     for (const record of this.textures.values()) gl.deleteTexture(record.texture); this.textures.clear();
     gl.deleteTexture(this.white); gl.deleteBuffer(this.buffer); gl.deleteVertexArray(this.vao); gl.deleteProgram(this.program);

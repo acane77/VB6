@@ -236,7 +236,7 @@ cryptographic-module certification.
 ## Validation commands
 
 ```sh
-npm run test:core
+node --test tests/core-*.test.mjs
 npm run build
 npm run verify:ide-artifacts
 npm test

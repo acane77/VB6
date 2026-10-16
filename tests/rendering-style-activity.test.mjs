@@ -96,12 +96,14 @@ test('closed shadow hosts stay native after subscription teardown and restart',a
 
 test('geometry style snapshots do not serialize fonts until atlas text needs them',async()=>{
   const {DOMScene}=await import('../src/rendering/dom-scene.js');
+  const {FONT_STYLE_KEYS}=await import('../src/rendering/text-style.js');
+  const expectedFonts=FONT_STYLE_KEYS.filter(key=>key.startsWith('font')).length;
   const scene=Object.create(DOMScene.prototype);let fonts=0,computed=0;
   Object.assign(scene,{styles:new WeakMap(),view:{getComputedStyle(){computed++;return new Proxy({},{get(_,key){if(String(key).startsWith('font'))fonts++;return String(key)}})}}});
   const node={},style=scene.style(node);assert.equal(fonts,0);assert.equal(computed,1);
   assert.equal(scene.style(node),style);assert.equal(computed,1);
-  assert.equal(scene.fontStyle(node,style),style);assert.equal(fonts,5);assert.equal(computed,2);
-  scene.fontStyle(node,style);assert.equal(fonts,5);assert.equal(computed,2);
+  assert.equal(scene.fontStyle(node,style),style);assert.equal(fonts,expectedFonts);assert.equal(computed,2);
+  scene.fontStyle(node,style);assert.equal(fonts,expectedFonts);assert.equal(computed,2);
 });
 
 test('teardown restores a wrapped setter without undoing a later foreign getter',()=>{
