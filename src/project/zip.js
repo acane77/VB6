@@ -1,4 +1,3 @@
-import {assertFileTree} from './file-tree.js';
 import {decodeNativeBytes} from './native-text.js';
 /** ZIP interoperability without a runtime dependency. Writes STORE; reads STORE/DEFLATE. */
 const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true});
@@ -9,8 +8,7 @@ export function crc32(bytes){let crc=0xffffffff;for(const b of bytes)crc=table[(
 function unsafePath(path){return !path||/^[\\/]|^[A-Za-z]:|\0/.test(path)||path.split(/[\\/]/).includes('..');}
 function concat(parts){const result=new Uint8Array(parts.reduce((s,p)=>s+p.length,0));let at=0;for(const p of parts){result.set(p,at);at+=p.length;}return result;}
 function header(size){const bytes=new Uint8Array(size);return {bytes,view:new DataView(bytes.buffer)};}
-export function writeZip(files){if(Object.keys(files).length>=65535)throw new Error('Too many entries for classic ZIP output');const locals=[],centrals=[],names=new Set();let offset=0;const now=new Date(),dosTime=(now.getHours()<<11)|(now.getMinutes()<<5)|(now.getSeconds()>>1),dosDate=((Math.max(1980,now.getFullYear())-1980)<<9)|((now.getMonth()+1)<<5)|now.getDate();
-  assertFileTree(Object.keys(files).filter(p=>!/[\\/]$/.test(p)),Object.keys(files).filter(p=>/[\\/]$/.test(p)));
+export function writeZip(files,{reproducible=false}={}){if(Object.keys(files).length>=65535)throw new Error('Too many entries for classic ZIP output');const locals=[],centrals=[],names=new Set();let offset=0;const now=new Date(),dosTime=reproducible?0:(now.getHours()<<11)|(now.getMinutes()<<5)|(now.getSeconds()>>1),dosDate=reproducible?33:((Math.max(1980,now.getFullYear())-1980)<<9)|((now.getMonth()+1)<<5)|now.getDate();
   for(const [path,input]of Object.entries(files)){if(unsafePath(path))throw new Error('Unsafe ZIP path');const key=path.replace(/\\/g,'/').split('/').filter(p=>p&&p!=='.').join('/').toLowerCase();if(names.has(key))throw new Error('Duplicate ZIP entry: '+path);names.add(key);const name=encoder.encode(path),data=typeof input==='string'?encoder.encode(input):asBytes(input),crc=crc32(data);if(decoder.decode(name)!==path)throw new Error('ZIP filename contains invalid Unicode');if(name.length>65535||data.length>=0xffffffff)throw new Error('ZIP entry exceeds classic format limits');const h=header(30),v=h.view;v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint16(6,0x800,true);v.setUint16(10,dosTime,true);v.setUint16(12,dosDate,true);v.setUint32(14,crc,true);v.setUint32(18,data.length,true);v.setUint32(22,data.length,true);v.setUint16(26,name.length,true);locals.push(h.bytes,name,data);
     const c=header(46),cv=c.view;cv.setUint32(0,0x02014b50,true);cv.setUint16(4,20,true);cv.setUint16(6,20,true);cv.setUint16(8,0x800,true);cv.setUint16(12,dosTime,true);cv.setUint16(14,dosDate,true);cv.setUint32(16,crc,true);cv.setUint32(20,data.length,true);cv.setUint32(24,data.length,true);cv.setUint16(28,name.length,true);cv.setUint32(42,offset,true);centrals.push(c.bytes,name);offset+=h.bytes.length+name.length+data.length;
   }
@@ -68,8 +66,7 @@ function fileName(raw, flags, fields, encoding) {
  * Central/local metadata is checked before inflation; nothing is written to disk.
  * Format references: PKWARE APPNOTE 4.3, 4.5.3, 4.6.9 and Appendix D.
  */
-export async function readZip(input, {maxExpandedBytes = 50 * 1024 * 1024, maxFiles = 2000, filenameEncoding = 'cp437'} = {}) {
-  for(const [name,value]of Object.entries({maxExpandedBytes,maxFiles}))if(!Number.isSafeInteger(value)||value<0)throw new Error('Invalid ZIP limit: '+name);
+export async function readZip(input, {maxExpandedBytes = 50 * 1024 * 1024, maxFiles = 2000, filenameEncoding = 'cp437', strictEntries = false} = {}) {
   filenameEncoding=zipFilenameEncoding(filenameEncoding);
   const bytes = asBytes(input), v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let end = -1;
@@ -118,6 +115,11 @@ export async function readZip(input, {maxExpandedBytes = 50 * 1024 * 1024, maxFi
     if (![0, 8].includes(method)) throw new Error('Unsupported ZIP compression: ' + method);
     const name = fileName(raw, flags, fields, filenameEncoding), normalized = name.replace(/\\/g, '/').split('/').filter(p => p && p !== '.').join('/');
     if (unsafePath(name) || /[\x00-\x1f]/.test(name) || (!normalized && !/[\\/]$/.test(name))) throw new Error('Unsafe path in ZIP');
+    if (strictEntries) {
+      const directory = name.endsWith('/'), kind = (v.getUint32(pos + 38, true) >>> 16) & 0xf000;
+      if (name !== normalized + (directory ? '/' : '')) throw new Error('Noncanonical deployment ZIP path');
+      if (kind && kind !== (directory ? 0x4000 : 0x8000)) throw new Error('Special files are not permitted in a deployment ZIP');
+    }
     if (names.has(normalized.toLowerCase())) throw new Error('Duplicate ZIP entry: ' + name);
     names.add(normalized.toLowerCase());
     total += expanded;
@@ -155,7 +157,6 @@ export async function readZip(input, {maxExpandedBytes = 50 * 1024 * 1024, maxFi
   if (pos !== directoryEnd) throw new Error('Invalid ZIP directory length or entry count');
   ranges.sort((a, b) => a[0] - b[0]);
   for (let i = 1; i < ranges.length; i++) if (ranges[i][0] < ranges[i - 1][1]) throw new Error('Overlapping ZIP entries');
-  assertFileTree(records.filter(r=>!r.directory).map(r=>r.name),records.filter(r=>r.directory).map(r=>r.name));
   const files = new Map();
   for (const record of records) {
     const {name, start, size, expanded, method, crc} = record; let data = bytes.slice(start, start + size);

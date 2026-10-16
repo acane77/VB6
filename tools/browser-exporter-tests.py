@@ -7,6 +7,7 @@ from functools import partial
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from exporter_browser_wait import wait_for_export
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / 'reports/exporter'
 BROWSER = os.environ.get('VB6_BROWSER', 'chromium')
@@ -46,7 +47,7 @@ def load(page, file, origin):
     page.set_content(text)
     for name in scripts: page.add_script_tag(content=(file.parent / name).read_text())
 def ready(page):
-    page.wait_for_function('globalThis.vb6ApplicationStatus?.phase === "ready"')
+    wait_for_export(page, 'globalThis.vb6ApplicationStatus?.phase === "ready"')
     check(page.evaluate('vb6Application.vm.state !== "error"'), 'Failed VM reported ready')
     check(page.locator('#vb6-startup').is_hidden(), 'Loading banner remained after success')
 def run_case(browser, name, file, origin, verify=None, failure=False):
@@ -57,7 +58,7 @@ def run_case(browser, name, file, origin, verify=None, failure=False):
     try:
         load(page, file, origin)
         if failure:
-            page.wait_for_function('globalThis.vb6ApplicationStatus?.phase === "error"')
+            wait_for_export(page, 'globalThis.vb6ApplicationStatus?.phase === "error"')
             check(page.locator('#vb6-startup').get_attribute('role') == 'alert', 'Startup failure has no alert')
             check(page.evaluate('vb6ApplicationReady.then(() => false, () => true)'), 'Public ready promise swallowed rejection')
             if 'adapter-error' in name:
@@ -93,7 +94,7 @@ try:
         context = browser.new_context(accept_downloads=True)
         page = context.new_page(); page.set_default_timeout(25000)
         load(page, ROOT / 'dist/VB6-Studio-Web.html' if INLINE else ROOT / 'dist/index.html', 'http')
-        page.wait_for_function('Boolean(globalThis.vb6Studio?.applicationExportInstalled)')
+        wait_for_export(page, 'Boolean(globalThis.vb6Studio?.applicationExportInstalled)')
         source = json.loads((ROOT / 'examples/calculator.vb6web').read_text())
         page.evaluate('project => vb6Studio.loadProject(project)', source)
         expected = page.evaluate('vb6Studio.project')

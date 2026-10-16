@@ -86,7 +86,7 @@ test('inspect reports errors without throwing and inventories external runtime d
 function environment(runtime) {
   const nodes = {'vb6-project': {textContent: JSON.stringify(newProject())}, 'vb6-options': {textContent: '{"persist":false}'}, app: {}, 'vb6-startup': {hidden: false, setAttribute(name, value) { this[name] = value; }}};
   const events = [], listeners = new Map();
-  const context = vm.createContext({document: {getElementById: id => nodes[id]}, VB6Runtime: runtime,
+  const context = vm.createContext({AbortController, document: {getElementById: id => nodes[id]}, VB6Runtime: runtime,
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
     dispatchEvent: e => {events.push(e); for (const fn of listeners.get(e.type) || []) fn(e);},
     addEventListener: (type, fn) => { const list = listeners.get(type) || []; list.push(fn); listeners.set(type, list); }
@@ -133,4 +133,76 @@ test('bootstrap persists on pagehide and does not dispose BFCache entries', asyn
 test('standalone IDE payload cannot enter legacy double-escaped script parsing', () => {
   const source = readFileSync(new URL('../dist/studio.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /<!--/);
+});
+
+
+test('departure cancels a pending adapter immediately and never mounts afterward', async () => {
+  let resolve, calls = 0, signal;
+  const env = environment({mountApplication: async () => {calls++; return {};}});
+  env.context.vb6ConfigureApplication = input => {signal = input.signal; return new Promise(done => {resolve = done;});};
+  const ready = env.start();
+  await new Promise(done => setImmediate(done));
+  env.context.dispatchEvent({type: 'pagehide', persisted: false});
+  await assert.rejects(ready, {name: 'AbortError', code: 'EXPORT_STARTUP_CANCELLED'});
+  assert.equal(signal.aborted, true);
+  resolve({});
+  await new Promise(done => setImmediate(done));
+  assert.equal(calls, 0);
+  assert.equal(env.context.vb6ApplicationStatus.phase, 'disposed');
+  assert.equal(env.events.filter(e => e.type === 'vb6:cancelled').length, 1);
+  assert.ok(!env.events.some(e => e.type === 'vb6:ready' || e.type === 'vb6:error'));
+});
+
+test('departure during mount disposes the late host exactly once', async () => {
+  let finish, disposals = 0;
+  const env = environment({mountApplication: () => new Promise(resolve => {finish = resolve;})});
+  const ready = env.start();
+  await new Promise(done => setImmediate(done));
+  env.context.dispatchEvent({type: 'pagehide', persisted: false});
+  await assert.rejects(ready, {name: 'AbortError'});
+  finish({dispose() {disposals++;}});
+  await new Promise(done => setImmediate(done));
+  env.context.dispatchEvent({type: 'pagehide', persisted: false});
+  assert.equal(disposals, 1);
+  assert.ok(!env.events.some(e => e.type === 'vb6:ready'));
+});
+
+test('failed hosts retain a departure cleanup and persist errors cannot prevent disposal', async () => {
+  let disposals = 0;
+  const env = environment({mountApplication: async () => ({vm: {state: 'error'}, persist() {throw new Error('storage failed');}, dispose() {disposals++;}})});
+  await assert.rejects(env.start());
+  env.context.dispatchEvent({type: 'pagehide', persisted: false});
+  env.context.dispatchEvent({type: 'pagehide', persisted: false});
+  assert.equal(disposals, 1);
+  assert.equal(env.events.filter(e => e.type === 'vb6:lifecycle-error').length, 1);
+});
+
+test('BFCache departure while configuring does not cancel a resumable startup', async () => {
+  let resolve, signal;
+  const env = environment({mountApplication: async () => ({})});
+  env.context.vb6ConfigureApplication = input => {signal = input.signal; return new Promise(done => {resolve = done;});};
+  const ready = env.start();
+  await new Promise(done => setImmediate(done));
+  env.context.dispatchEvent({type: 'pagehide', persisted: true});
+  assert.equal(signal.aborted, false);
+  resolve({});
+  await ready;
+  assert.equal(env.context.vb6ApplicationStatus.phase, 'ready');
+});
+
+test('departure before the startup microtask cannot create a host', async () => {
+  let calls = 0;
+  const env = environment({mountApplication: async () => {calls++; return {};}});
+  const ready = env.start();
+  env.context.dispatchEvent({type: 'pagehide', persisted: false});
+  await assert.rejects(ready, {name: 'AbortError'});
+  assert.equal(calls, 0);
+});
+
+test('invalid mount results report a startup error rather than exposing a fake ready host', async () => {
+  for (const host of [null, undefined, 1, 'host']) {
+    const env = environment({mountApplication: async () => host});
+    await assert.rejects(env.start(), /did not return a host/);
+    assert.ok(!env.events.some(e => e.type === 'vb6:ready'));
+  }
 });

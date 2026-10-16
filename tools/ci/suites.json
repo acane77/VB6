@@ -44,7 +44,8 @@
     "browser-xaml-tests.py",
     "browser-macos-export-tests.py",
     "browser-macos-aot-tests.py",
-    "browser-designer-tests.py"
+    "browser-designer-tests.py",
+    "browser-exporter-offline-tests.py"
   ],
   "figma-authoring": [
     "figma-browser-tests.py",
