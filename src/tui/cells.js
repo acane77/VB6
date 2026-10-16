@@ -1,3 +1,4 @@
+import {paintTuiGlyph} from './raster.js';
 /** Character-cell presentation primitives. No dependency on the DOM or VB6. */
 export const EGA = Object.freeze(['#000000','#0000aa','#00aa00','#00aaaa','#aa0000','#aa00aa','#aa5500','#aaaaaa','#555555','#5555ff','#55ff55','#55ffff','#ff5555','#ff55ff','#ffff55','#ffffff']);
 export const TUI_PROFILES = Object.freeze({
@@ -77,23 +78,68 @@ export class CellBuffer {
   toText() {const lines=[];for(let y=0;y<this.rows;y++){let line='';for(let x=0;x<this.columns;x++)line+=String.fromCodePoint(this.glyphs[y*this.columns+x]);lines.push(line);}return lines.join('\n');}
   snapshot() {return {columns:this.columns,rows:this.rows,glyphs:Array.from(this.glyphs),colors:Array.from(this.colors)};}
 }
-/** Device-scaled cached glyphs. The caller owns the canvas; no event interception. */
+/** Shared, bounded LRU glyph tiles for one presentation root. Device dimensions
+ * and actual palette values are part of the key, so fractional-DPR tiles and
+ * concurrent palettes cannot collide. Eviction releases the backing canvas. */
+export class CellGlyphAtlas {
+  constructor(document,{maxGlyphs=2048,maxPixels=1048576}={}) {
+    if(!Number.isSafeInteger(maxGlyphs)||maxGlyphs<1||maxGlyphs>4096||!Number.isSafeInteger(maxPixels)||maxPixels<128||maxPixels>16777216)throw new RangeError('Invalid glyph atlas budget');
+    this.document=document;this.maxGlyphs=maxGlyphs;this.maxPixels=maxPixels;this.pixels=0;this.cache=new Map();
+    this.metrics={hits:0,misses:0,evictions:0};
+  }
+  glyph(code,color,width,height,palette) {
+    const key=`${width}:${height}:${code}:${palette[color&15]}:${palette[color>>4]}`;
+    let entry=this.cache.get(key);
+    if(entry){this.metrics.hits++;this.cache.delete(key);this.cache.set(key,entry);return entry.canvas;}
+    const pixels=width*height;
+    if(pixels>this.maxPixels)throw new RangeError('Glyph exceeds atlas pixel budget');
+    while(this.cache.size>=this.maxGlyphs||this.pixels+pixels>this.maxPixels)this.evict();
+    const canvas=this.document.createElement('canvas');canvas.width=width;canvas.height=height;
+    const g=canvas.getContext('2d');if(!g)throw new Error('Canvas2D glyph context unavailable');
+    g.fillStyle=palette[color>>4];g.fillRect(0,0,width,height);g.fillStyle=palette[color&15];
+    if(!paintTuiGlyph(g,code,width,height)&&code!==32){
+      g.font=`${Math.round(height*.88)}px monospace`;g.textBaseline='middle';g.textAlign='center';
+      g.fillText(String.fromCodePoint(code),width/2,height/2,width);
+    }
+    this.metrics.misses++;this.cache.set(key,{canvas,pixels});this.pixels+=pixels;return canvas;
+  }
+  evict() {
+    const key=this.cache.keys().next().value,entry=this.cache.get(key);if(!entry)return;
+    this.cache.delete(key);this.pixels-=entry.pixels;entry.canvas.width=entry.canvas.height=1;this.metrics.evictions++;
+  }
+  clear(){for(const entry of this.cache.values())entry.canvas.width=entry.canvas.height=1;this.cache.clear();this.pixels=0;}
+}
+
+/** Device-scaled cells. Fractional scale is applied to every cell EDGE rather
+ * than rounding a cell once and accumulating a whole-screen positioning drift. */
 export class CanvasCellRenderer {
-  constructor(canvas,{cellWidth=8,cellHeight=16,palette=EGA,maxGlyphs=2048}={}) {
+  constructor(canvas,{cellWidth=8,cellHeight=16,palette=EGA,maxGlyphs=2048,maxPixels=4194304,atlas=null}={}) {
     if(!Number.isFinite(cellWidth)||!Number.isFinite(cellHeight)||cellWidth<1||cellHeight<1||cellWidth>64||cellHeight>128)throw new RangeError('Invalid cell metrics');
+    if(!Array.isArray(palette)||palette.length!==16||palette.some(color=>typeof color!=='string'||!/^#[0-9a-f]{6}$/i.test(color)))throw new TypeError('Palette must contain 16 RGB colors');
+    if(!Number.isSafeInteger(maxPixels)||maxPixels<128||maxPixels>16777216)throw new RangeError('Invalid cell surface budget');
     this.canvas=canvas;this.context=canvas.getContext('2d',{alpha:true});if(!this.context)throw new Error('Canvas2D unavailable');
-    this.cellWidth=cellWidth;this.cellHeight=cellHeight;this.palette=palette;this.maxGlyphs=maxGlyphs;this.cache=new Map();this.key='';
+    this.cellWidth=cellWidth;this.cellHeight=cellHeight;this.palette=Object.freeze([...palette]);this.maxPixels=maxPixels;
+    this.atlas=atlas||new CellGlyphAtlas(canvas.ownerDocument,{maxGlyphs});this.ownsAtlas=!atlas;
+    this.cache=this.atlas.cache;this.key='';this.disposed=false;
+  }
+  dimensions(buffer,dpr=1) {
+    dpr=Number.isFinite(dpr)?Math.min(4,Math.max(1,dpr)):1;
+    const width=Math.max(1,Math.round(this.cellWidth*dpr*buffer.columns)),height=Math.max(1,Math.round(this.cellHeight*dpr*buffer.rows));
+    if(width*height>this.maxPixels)throw new RangeError('Cell surface exceeds its pixel budget');
+    return {width,height,dpr};
   }
   render(buffer,dpr=1) {
-    dpr=Number.isFinite(dpr)?Math.min(4,Math.max(1,dpr)):1;
-    const w=Math.max(1,Math.round(this.cellWidth*dpr)),h=Math.max(1,Math.round(this.cellHeight*dpr)),key=[w,h,buffer.columns,buffer.rows].join(':');
-    if(key!==this.key){this.key=key;this.cache.clear();this.canvas.width=w*buffer.columns;this.canvas.height=h*buffer.rows;buffer.invalidate();}
+    if(this.disposed)throw new Error('Cell renderer is disposed');
+    const size=this.dimensions(buffer,dpr);dpr=size.dpr;
+    const key=[size.width,size.height,buffer.columns,buffer.rows,dpr].join(':');
+    if(key!==this.key){this.key=key;this.canvas.width=size.width;this.canvas.height=size.height;buffer.invalidate();}
     const ctx=this.context;ctx.imageSmoothingEnabled=false;
     for(const span of buffer.takeDamage())for(let x=span.x;x<span.x+span.width;x++){
-      const i=span.y*buffer.columns+x,color=buffer.colors[i],code=buffer.glyphs[i],cacheKey=`${code}:${color}`;let glyph=this.cache.get(cacheKey);
-      if(!glyph){glyph=this.canvas.ownerDocument.createElement('canvas');glyph.width=w;glyph.height=h;const g=glyph.getContext('2d');g.fillStyle=this.palette[color>>4];g.fillRect(0,0,w,h);g.fillStyle=this.palette[color&15];g.font=`${Math.round(h*.88)}px monospace`;g.textBaseline='middle';g.textAlign='center';g.fillText(String.fromCodePoint(code),w/2,h/2,w);if(this.cache.size>=this.maxGlyphs)this.cache.delete(this.cache.keys().next().value);this.cache.set(cacheKey,glyph);}
-      ctx.drawImage(glyph,x*w,span.y*h);
+      const i=span.y*buffer.columns+x,left=Math.round(x*this.cellWidth*dpr),top=Math.round(span.y*this.cellHeight*dpr);
+      const width=Math.round((x+1)*this.cellWidth*dpr)-left,height=Math.round((span.y+1)*this.cellHeight*dpr)-top;
+      const glyph=this.atlas.glyph(buffer.glyphs[i],buffer.colors[i],width,height,this.palette);
+      ctx.drawImage(glyph,left,top);
     }
   }
-  dispose() {this.cache.clear();this.canvas.width=this.canvas.height=1;}
+  dispose(){if(this.disposed)return;this.disposed=true;if(this.ownsAtlas)this.atlas.clear();this.canvas.width=this.canvas.height=1;}
 }

@@ -12,7 +12,7 @@ export function installDOSWorkspace(ide) {
   let revision=0,storage;try{storage=view.localStorage;}catch{}
   const workspace={settings:loadDOSSettings(storage),enabled:false,registry,sessions,disposed:false,ready:Promise.resolve()};ide.dosMode=workspace;
   const report=error=>ide.status('DOS workspace: '+(error.message||String(error)));
-  const attach=doc=>{if(workspace.enabled&&!sessions.has(doc))sessions.set(doc,new DOMTuiRenderer(doc,{settings:workspace.settings,registry,onError:report}));};
+  const attach=doc=>{if(workspace.enabled&&(!sessions.has(doc)||sessions.get(doc).disposed)){const renderer=new DOMTuiRenderer(doc,{settings:workspace.settings,registry,onError:report,onDispose:()=>{if(sessions.get(doc)===renderer)sessions.delete(doc);}});sessions.set(doc,renderer);}};
   const detach=doc=>{sessions.get(doc)?.dispose();sessions.delete(doc);};
   const save=()=>{try{storage?.setItem(DOS_SETTINGS_KEY,JSON.stringify(workspace.settings));}catch{report(new Error('Settings apply to this session; browser storage is unavailable.'));}};
   const disable=()=>{workspace.enabled=false;for(const doc of [...sessions.keys()])detach(doc);workspace.functionBar?.remove();workspace.functionBar=null;if(document.documentElement.getAttribute('data-ide-workspace')==='dos')document.documentElement.removeAttribute('data-ide-workspace');};
