@@ -37,8 +37,7 @@
     "browser-sample-exports.py",
     "browser-exporter-tests.py",
     "browser-macos-reference-tests.py",
-    "browser-winui-tests.py",
-    "dos-browser-tests.py"
+    "browser-winui-tests.py"
   ],
   "intelligent-ui": [
     "intelligent-ui-browser-tests.py",
@@ -77,5 +76,8 @@
   "project-authoring": [
     "native-project-browser-tests.py",
     "project-workspace-review-browser-tests.py"
+  ],
+  "tui-authoring": [
+    "dos-browser-tests.py"
   ]
 }

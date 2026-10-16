@@ -36,6 +36,7 @@ jobs:
           python tools/ci/check.py
           python tools/ci/test_run.py
           python tools/ci/test_check.py
+          python tools/ci/test_tui_acceptance.py
           node --test tests/ci-gate.test.mjs
       - name: Check Actions expressions and workflow structure with verified actionlint
         run: |
@@ -229,6 +230,7 @@ jobs:
         suite:
           - integration-controls
           - integration-authoring
+          - tui-authoring
           - intelligent-ui
           - project-authoring
     steps:
