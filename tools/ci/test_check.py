@@ -70,6 +70,8 @@ class WorkflowAuditTests(unittest.TestCase):
         self.reject(lambda w:[s.update({'run':'xvfb-run -a '+s['run']}) for s in w['jobs']['linux']['steps'] if 'tools/test-linux-aot.mjs' in s.get('run','')])
     def test_linux_browser_native_requires_artifacts(self):
         self.reject(lambda w:w['jobs']['linux-browser-native'].update({'needs':['hygiene']}))
+    def test_linux_browser_native_survives_unrelated_export_suite_failure(self):
+        self.reject(lambda w:w['jobs']['linux-browser-native'].pop('if'))
     def test_skippable_gate_rejected(self):self.reject(lambda w:w['jobs']['test'].update({'if':'success()'}))
     def test_failure_suppression_rejected(self):self.reject(lambda w:w['jobs']['figma'].update({'continue-on-error':True}))
     def test_missing_engine_rejected(self):self.reject(lambda w:w['jobs']['figma']['strategy']['matrix']['browser'].remove('webkit'))

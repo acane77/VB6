@@ -111,6 +111,8 @@ def audit(root=ROOT):
         raise ValueError('Linux must run package tests and directly qualify both shipped and rebuilt runtimes')
     if jobs.get('linux-browser-native', {}).get('needs') != ['authoring-exports']:
         raise ValueError('Linux native execution must consume actual browser exports')
+    if jobs['linux-browser-native'].get('if') != '${{ !cancelled() }}':
+        raise ValueError('Linux browser artifacts must be verified even after an unrelated export-suite failure')
     if not any(step.get('with', {}).get('pattern') == 'linux-direct-browser-*' for step in jobs['linux-browser-native']['steps']):
         raise ValueError('Linux execution must use this run\'s browser archives')
     if jobs['advanced-editor']['needs'] != ['advanced-build']:
