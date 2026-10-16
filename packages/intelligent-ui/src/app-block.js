@@ -18,18 +18,18 @@ export function appBlockDocument(html){
 }
 export function createAppBlockFactory({proxyUrl,approveApp=async()=>false,approveAction=async()=>false,onAction=()=>{},hostContext=()=>({}),subscribeLifecycle}={}) {
   return ({document,onAction:dispatchAction=onAction})=>{
-    const node=document.createElement('section'),notice=document.createElement('p'),run=document.createElement('button'),stop=document.createElement('button'),view=document.createElement('div');run.type=stop.type='button';run.textContent='Run isolated app';stop.textContent='Stop app';stop.hidden=true;node.append(notice,run,stop,view);let props={},generation=0,app=null,disposed=false;const observer=document.defaultView.MutationObserver?new document.defaultView.MutationObserver(()=>app?.updateHostContext(hostContext())):null;observer?.observe(document.documentElement,{attributes:true});
-    const end=()=>{app?.dispose();app=null;view.replaceChildren();run.disabled=false;stop.hidden=true;};
+    const node=document.createElement('section'),notice=document.createElement('p'),run=document.createElement('button'),stop=document.createElement('button'),view=document.createElement('div');run.type=stop.type='button';run.textContent='Run isolated app';stop.textContent='Stop app';stop.hidden=true;node.append(notice,run,stop,view);let props={},generation=0,app=null,disposed=false,approval=null;const observer=document.defaultView.MutationObserver?new document.defaultView.MutationObserver(()=>app?.updateHostContext(hostContext())):null;observer?.observe(document.documentElement,{attributes:true});
+    const end=()=>{approval?.abort();approval=null;app?.dispose();app=null;view.replaceChildren();run.disabled=false;stop.hidden=true;};
     const error=e=>{notice.textContent=e.message||String(e);};
     const off=subscribeLifecycle?.(()=>{generation++;end();notice.textContent='App stopped because its host context changed. Review before running again.';});
     run.onclick=async()=>{
-      const token=generation,snapshot={html:props.html,title:props.title||'AppBlock'};run.disabled=true;
+      const token=generation,controller=new AbortController(),snapshot={html:props.html,title:props.title||'AppBlock'};approval=controller;run.disabled=true;
       try{const url=typeof proxyUrl==='function'?proxyUrl():proxyUrl;appProxyUrl(url,document.defaultView.location.origin);
-        if(await approveApp({...snapshot,proxyUrl:url})!==true)throw new UIError('denied','App execution declined.');if(disposed||generation!==token)return;end();
+        if(await approveApp({...snapshot,proxyUrl:url},{signal:controller.signal})!==true)throw new UIError('denied','App execution declined.');if(disposed||generation!==token||controller.signal.aborted)return;approval=null;end();
         app=new McpAppHost(view,{proxyUrl:url,html:appBlockDocument(snapshot.html),hostContext:hostContext(),approve:approveAction,
           onMessage:(p,context)=>dispatchAction(p.content.every(c=>c.type==='text')?{type:'message',args:[p.content.map(c=>c.text).join('\n')]}:{type:'messageContent',args:[p.content]},context),onContext:(p,context)=>dispatchAction({type:'context',args:[p]},context),openLink:(url,context)=>dispatchAction({type:'link',args:[url]},context),onError:error});
         run.disabled=true;stop.hidden=false;notice.textContent='Running on a separate origin. No project, clipboard or tool capability is granted to this app.';
-      }catch(e){if(!disposed&&generation===token){error(e);run.disabled=false;}}
+      }catch(e){if(!disposed&&generation===token){error(e);run.disabled=false;}}finally{if(approval===controller)approval=null;controller.abort();}
     };
     stop.onclick=()=>{generation++;end();notice.textContent='App stopped. Its private state was discarded.';};
     return {node,childHost:document.createElement('span'),update(value){const changed=props.html!==value.html;props=value;if(changed){generation++;end();notice.textContent='Review before running arbitrary app code. A separate-origin sandbox service is required; browser isolation is not an operating-system network firewall.';}},dispose(){disposed=true;generation++;observer?.disconnect();off?.();end();}};

@@ -3,9 +3,9 @@ export function pinUIActionContext(host, {adapter=host.adapter, owner}={}) {
   const task = owner && adapter === host.adapter
     ? [...host.conversations.tasks.values()].find(value => value.agent.sessionKey === owner)
     : host.conversations.active;
-  const thread = task?.agent.thread, epoch = host.adapter.workspaceEpoch;
+  const thread = task?.agent.thread, epoch = host.adapter.workspaceEpoch, contextRevision = host.contextRevision || 0;
   const assertLive = () => {
-    if (!host.enabled || !task || host.conversations.tasks.get(task.id) !== task ||
+    if (!host.enabled || contextRevision !== (host.contextRevision || 0) || !task || host.conversations.tasks.get(task.id) !== task ||
         host.conversations.active !== task || task.agent.thread !== thread ||
         host.adapter.workspaceEpoch !== epoch)
       throw new Error('This UI belongs to a different task or project session.');

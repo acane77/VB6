@@ -38,7 +38,8 @@
   ],
   "intelligent-ui": [
     "intelligent-ui-browser-tests.py",
-    "intelligent-ui-host-browser-tests.py"
+    "intelligent-ui-host-browser-tests.py",
+    "intelligent-ui-workbench-tests.py"
   ],
   "authoring-exports": [
     "browser-xaml-tests.py",
