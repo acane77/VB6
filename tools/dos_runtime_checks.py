@@ -83,14 +83,22 @@ def run_runtime_checks(browser, root, report, seed):
           assertTUI(control(a,'TextBoxTest').get('Text')==='Live native editor','input did not update VB6');
           control(a,'CommandButtonTest').SetFocus();
         }''')
-        # Establish a common native viewport, then drain the focus/scroll paint.
-        # Firefox retains scrollLeft on blur. The property assertion below must
-        # not assume it resets, or accidentally pass on a pending focus repaint.
+        # Drain existing focus/scroll paints before the property-only update.
+        # Firefox can retain or adjust its native horizontal viewport on blur.
+        # The new value must paint through that viewport, including clipped
+        # leading characters, rather than depending on a visible text prefix.
         page.evaluate('originalInput.scrollLeft=0')
         page.wait_for_function('a.tuiPresentation.frame===0')
         page.evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
         page.evaluate("control(a,'TextBoxTest').set('Text','Property-only repaint')")
-        page.wait_for_function('a.tuiPresentation.controls.get(control(a,"TextBoxTest").node).buffer.toText().includes("Property-only")')
+        page.wait_for_function('''() => {
+          const c=control(a,'TextBoxTest'),entry=a.tuiPresentation.controls.get(c.node);
+          const value='Property-only repaint';
+          if(c.input.value!==value||!entry?.buffer)return false;
+          const column=Math.max(0,Math.floor(c.input.scrollLeft/entry.painter.cellWidth));
+          const visible=value.slice(column,column+entry.buffer.columns);
+          return visible.length>=8&&entry.buffer.toText().split('\\n')[0]===visible.padEnd(entry.buffer.columns,' ');
+        }''')
         checked('materialization invalidation paints .value changes without input events', '''() => {
           assertTUI(control(a,'TextBoxTest').input===originalInput,'input was replaced');
           const node=control(a,'TextBoxTest').node,entry=a.tuiPresentation.controls.get(node);
