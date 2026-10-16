@@ -36,7 +36,7 @@ Text readText(const Arg&arg,bool wide,bool terminated=true,int64_t count=-1){
   Text result;const auto&value=arg.value;
   if(value.type==Type::String){result=value.string();if(!wide){auto bytes=encodeANSI(result);if(count>=0){if(uint64_t(count)>bytes.size())fail(5,"API input length exceeds String capacity");bytes.resize(size_t(count));}result=decodeANSI(bytes);}}
   else if(value.type==Type::Array){auto bytes=rawBytes(arg);if(wide){if(bytes.size()%2)fail(5,"Wide buffer has an odd byte length");for(size_t i=0;i<bytes.size();i+=2)result.push_back(char16_t(uint16_t(bytes[i])|(uint16_t(bytes[i+1])<<8)));}else{if(count>=0){if(uint64_t(count)>bytes.size())fail(5);bytes.resize(size_t(count));}result=decodeANSI(bytes);}}
-  else if(value.type==Type::Empty||value.type==Type::Long&&value.integral()==0||value.type==Type::Integer&&value.integral()==0)return {};
+  else if(value.type==Type::Empty||(value.type==Type::Long&&value.integral()==0)||(value.type==Type::Integer&&value.integral()==0))return {};
   else fail(13,"Raw pointers are not valid native String arguments");
   if(wide&&count>=0){if(uint64_t(count)>result.size())fail(5,"Wide input length exceeds buffer capacity");result.resize(size_t(count));}
   if(terminated){auto end=result.find(u'\0');if(end!=Text::npos)result.resize(end);}return result;

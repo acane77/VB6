@@ -22,6 +22,10 @@ struct GtkItem;
 struct GtkPicture final : Object {
   GdkPixbuf* pixels = nullptr;
   int32_t handle = 0;
+  int pictureType = 1;
+  bool cursor = false;
+  uint32_t hotspotX = 0, hotspotY = 0;
+  std::vector<uint8_t> encoded;
   std::weak_ptr<int> ownerLife;
   HandleRegistry* registry = nullptr;
   explicit GtkPicture(GdkPixbuf* value = nullptr);
@@ -78,6 +82,7 @@ struct GtkItems final : Object {
 
 struct GtkControl final : Object {
   GtkHost* host;
+  std::weak_ptr<int> hostLife;
   std::weak_ptr<Instance> owner;
   ControlSpec spec;
   std::map<std::string, Value> properties;

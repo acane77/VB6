@@ -55,11 +55,11 @@ struct GtkPrinterObject final:Object {
 }
 GtkPicture::GtkPicture(GdkPixbuf* value):pixels(value){if(pixels)g_object_ref(pixels);}
 GtkPicture::~GtkPicture(){if(pixels)g_object_unref(pixels);if(registry&&!ownerLife.expired())registry->remove(handle);}
-Value GtkPicture::get(Runtime&,const std::string& raw){auto name=lower(raw);if(name=="handle")return Value::integer(handle);if(name=="type")return Value::integer(pixels?1:0,Type::Integer);if(name=="width"||name=="height")return Value::integer(pixels?bankers((name=="width"?gdk_pixbuf_get_width(pixels):gdk_pixbuf_get_height(pixels))*2540.0/96):0);fail(438);}
+Value GtkPicture::get(Runtime&,const std::string& raw){auto name=lower(raw);if(name=="handle")return Value::integer(handle);if(name=="type")return Value::integer(pixels?pictureType:0,Type::Integer);if(name=="width"||name=="height")return Value::integer(pixels?bankers((name=="width"?gdk_pixbuf_get_width(pixels):gdk_pixbuf_get_height(pixels))*2540.0/96):0);fail(438);}
 Value gtkLoadPicture(GtkHost& host,const std::vector<uint8_t>& data) {
-  if(data.empty())return Value::object(std::make_shared<GtkPicture>());auto* loader=gdk_pixbuf_loader_new();GError* error=nullptr;
-  if(!gdk_pixbuf_loader_write(loader,data.data(),data.size(),&error)||!gdk_pixbuf_loader_close(loader,&error)){std::string message=error?error->message:"Image could not be decoded";if(error)g_error_free(error);g_object_unref(loader);fail(481,message);}
-  auto image=std::make_shared<GtkPicture>(gdk_pixbuf_loader_get_pixbuf(loader));g_object_unref(loader);if(!image->pixels)fail(481);image->ownerLife=host.life;image->registry=&host.handles;image->handle=host.handles.add(image,HandleKind::Image);return Value::object(image);
+  if(data.empty())return Value::object(std::make_shared<GtkPicture>());auto validated=decodeNativePicture(data);auto bytes=validated.frames.empty()?validated.bytes:nativePictureFrameBytes(validated,validated.selected);auto* loader=gdk_pixbuf_loader_new();GError* error=nullptr;
+  if(!gdk_pixbuf_loader_write(loader,bytes.data(),bytes.size(),&error)||!gdk_pixbuf_loader_close(loader,&error)){std::string message=error?error->message:"Image could not be decoded";if(error)g_error_free(error);g_object_unref(loader);fail(481,message);}
+  auto image=std::make_shared<GtkPicture>(gdk_pixbuf_loader_get_pixbuf(loader));g_object_unref(loader);if(!image->pixels)fail(481);image->pictureType=validated.type;image->cursor=validated.cursor;image->hotspotX=validated.hotspotX;image->hotspotY=validated.hotspotY;image->encoded=std::move(validated.bytes);image->ownerLife=host.life;image->registry=&host.handles;image->handle=host.handles.add(image,HandleKind::Image);return Value::object(image);
 }
 Value gtkFont(std::weak_ptr<GtkControl> owner){return Value::object(std::make_shared<GtkFontObject>(owner));}
 Value gtkPrinter(GtkHost& host,const std::string& name) {
