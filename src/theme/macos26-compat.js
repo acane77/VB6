@@ -77,3 +77,9 @@ export function macos26ControlAttributes(properties = {}) {
   attributes['data-macos-indeterminate'] = properties.MacOSIndeterminate === -1 ? 'true' : null;
   return attributes;
 }
+
+export const MacOS26 = Object.freeze({
+  MACOS26_CONTROL_SIZES,MACOS26_CONTROL_STYLES,MACOS26_MATERIALS,MACOS26_PROPERTY_DEFAULTS,MACOS26_PROPERTIES,
+  macos26PropertyChoices,macos26PropertyDefaults,validateMacOS26Property,validateMacOS26Properties,
+  clearMacOS26ColorRoles,macos26ControlAttributes
+});

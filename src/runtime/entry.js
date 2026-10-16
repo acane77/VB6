@@ -1,4 +1,4 @@
-import * as MacOS26 from '../theme/macos26-compat.js';
+import {MacOS26} from '../theme/macos26-compat.js';
 import {MACOS26_RESOURCES,MACOS26_METRICS,MACOS26_REFERENCE} from '../theme/macos26-resources.js';
 import {TUI} from '../tui/api.js';
 import {WebBrowserControl,registerWebBrowserControls,WEB_BROWSER_METADATA} from '../controls/webbrowser-control.js';
