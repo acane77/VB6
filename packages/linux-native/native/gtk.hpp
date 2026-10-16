@@ -174,6 +174,7 @@ struct GtkHost final : NativeHost {
   std::exception_ptr pending;
   std::shared_ptr<int> life = std::make_shared<int>(0);
   HandleRegistry handles;
+  std::map<std::string,ObjectPtr> systemObjects;
   std::map<Instance*, std::shared_ptr<GtkForm>> forms;
   std::map<std::pair<int32_t, int32_t>, guint> apiTimers;
   std::vector<GMainLoop*> loops;
@@ -242,5 +243,7 @@ Value gtkPrint(GtkControl&, Args);
 Value gtkFont(std::weak_ptr<GtkControl> = {});
 Value gtkLoadPicture(GtkHost&, const std::vector<uint8_t>&);
 Value gtkHostObject(GtkHost&, const std::string&);
+Value gtkPrinter(GtkHost&, const std::string&);
+Value gtkPrintForm(GtkHost&, const std::shared_ptr<GtkForm>&);
 std::shared_ptr<GtkControl> gtkDrawingControl(GtkHost&, Value);
 }

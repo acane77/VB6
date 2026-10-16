@@ -288,6 +288,7 @@ Value GtkHost::formCall(const std::shared_ptr<Instance>& owner,const std::string
   if(name=="setfocus") { gtk_window_present(GTK_WINDOW(value->window));return {}; }
   if(name=="zorder") { auto n=integerArgument(args,0);if(n<0||n>1)fail(5);auto* window=gtk_widget_get_window(value->window);if(window){if(n)gdk_window_lower(window);else gdk_window_raise(window);}return {}; }
   if(name=="popupmenu") { auto c=std::dynamic_pointer_cast<GtkControl>(argument(args,0).asObject());if(!c||!c->menu)fail(424);auto* menu=gtk_menu_item_get_submenu(GTK_MENU_ITEM(c->menu));if(!menu)fail(5,"PopupMenu requires child items");gtk_menu_popup_at_pointer(GTK_MENU(menu),nullptr);return {}; }
+  if(name=="printform")return gtkPrintForm(*this,value);
   return value->surface->invoke(*runtime,name,std::move(args));
 }
 void GtkHost::rebuildMenus(const std::shared_ptr<GtkForm>& value) {
@@ -377,7 +378,7 @@ void GtkHost::cancelTimers(int32_t handle) {
   for(auto it=apiTimers.begin();it!=apiTimers.end();)if(it->first.first==handle){g_source_remove(it->second);it=apiTimers.erase(it);}else ++it;
 }
 void GtkHost::shutdown() {
-  if(closing)return;closing=true;life.reset();stopLoops();
+  if(closing)return;closing=true;life.reset();stopLoops();systemObjects.clear();
   for(auto& timer:apiTimers)g_source_remove(timer.second);apiTimers.clear();
   for(auto& entry:forms){auto value=entry.second;value->closing=true;
     for(auto& c:gtkFormControls(value->owner))c->dispose();value->surface->dispose();

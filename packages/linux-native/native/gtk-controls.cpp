@@ -136,7 +136,7 @@ void GtkControl::initialize() {
   else if(type=="ComboBox"||type=="DriveListBox")widget=type=="DriveListBox"||number("style",0)==2?gtk_combo_box_text_new():gtk_combo_box_text_new_with_entry();
   else if(type=="Frame") {widget=gtk_frame_new(caption.c_str());content=gtk_fixed_new();gtk_container_add(GTK_CONTAINER(widget),content);gtk_widget_show(content);}
   else if(type=="Form"||type=="MDIForm"||type=="PictureBox") {widget=gtk_fixed_new();content=widget;}
-  else if(type=="Image"||type=="Line"||type=="Shape")widget=gtk_drawing_area_new();
+  else if(type=="Image"||type=="Line"||type=="Shape"||type=="MSChart")widget=gtk_drawing_area_new();
   else if(type=="ListBox"||type=="ListView"||type=="TreeView"||type=="FileListBox"||type=="DirListBox"||isGrid(*this)) {
     view=gtk_scrolled_window_new(nullptr,nullptr);widget=gtk_tree_view_new();gtk_container_add(GTK_CONTAINER(view),widget);gtk_widget_show(widget);
     gtk_tree_selection_set_mode(gtk_tree_view_get_selection(GTK_TREE_VIEW(widget)),flag("multiselect")?GTK_SELECTION_MULTIPLE:GTK_SELECTION_SINGLE);
@@ -173,7 +173,8 @@ void GtkControl::initialize() {
     auto collection=items("tabs");for(int i=0;i<count;++i)collection->invoke(*host->runtime,"add",{Arg(Value::missing()),Arg(Value::string(u"")),Arg(Value::string(u"Tab "+fromUTF8(std::to_string(i))))});
   }
   if(type=="Toolbar")items("buttons");if(type=="StatusBar")items("panels");
-  if(content||type=="Image"||type=="Line"||type=="Shape")gtkSignal(widget,"draw",G_CALLBACK(+[](GtkWidget*,cairo_t* cr,gpointer data)->gboolean {gtkEvent(data,[&](GtkControl& c){gtkDraw(c,cr);});return FALSE;}),self());
+  if(type=="MSChart")resizeGrid(size_t(number("rowcount",5)),size_t(number("columncount",1)));
+  if(content||type=="Image"||type=="Line"||type=="Shape"||type=="MSChart")gtkSignal(widget,"draw",G_CALLBACK(+[](GtkWidget*,cairo_t* cr,gpointer data)->gboolean {gtkEvent(data,[&](GtkControl& c){gtkDraw(c,cr);});return FALSE;}),self());
   gtkConnectInput(*this);
   auto initial=property("list");if(initial.type==Type::Array)for(auto& value:initial.asArray()->values)list.push_back(value.string());itemData.resize(list.size());
   if(type=="DriveListBox"||type=="DirListBox"||type=="FileListBox")reloadFiles();
@@ -238,7 +239,7 @@ void GtkControl::changed(const std::string& name) {
   if(name=="text") {auto value=editText();auto maximum=number("maxlength");if(maximum>0&&value.size()>size_t(maximum)){value.resize(size_t(maximum));editSetText(value,false);}auto old=property("text",Value::string(u"")).string();properties["text"]=Value::string(value);if(old!=value)event("change");return;}
   if(name=="listindex") {auto index=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));properties["listindex"]=Value::integer(index);selected.clear();if(index>=0)selected.insert(size_t(index));if(spec.type=="DriveListBox"&&index>=0)properties["drive"]=Value::string(list[size_t(index)]);event(spec.type=="DriveListBox"?"change":"click");return;}
   if(name=="value") {
-    if(GTK_IS_TOGGLE_BUTTON(widget)) {auto value=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));properties["value"]=Value::integer(value?1:0,Type::Integer);if(spec.type=="OptionButton"&&!value)return;event("click");return;}
+    if(GTK_IS_TOGGLE_BUTTON(widget)) {auto value=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));gtk_toggle_button_set_inconsistent(GTK_TOGGLE_BUTTON(widget),FALSE);properties["value"]=Value::integer(value?1:0,Type::Integer);if(spec.type=="OptionButton"&&!value)return;event("click");return;}
     if(GTK_IS_RANGE(widget))properties["value"]=Value::integer(bankers(gtk_range_get_value(GTK_RANGE(widget))));
     else if(GTK_IS_SPIN_BUTTON(widget))properties["value"]=Value::integer(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(widget)));
     else if(GTK_IS_CALENDAR(widget)){guint y,m,d;gtk_calendar_get_date(GTK_CALENDAR(widget),&y,&m,&d);properties["value"]=civilDate({int(y),int(m+1),int(d),0,0,0});}
@@ -269,7 +270,8 @@ Value GtkControl::get(Runtime& rt,const std::string& raw) {
   }
   if(name=="rows"||name=="rowcount")return Value::integer(grid.size());
   if(name=="cols"||name=="columncount")return Value::integer(grid.empty()?0:grid[0].size());
-  if(name=="row"||name=="col")return property(name,Value::integer(0));
+  if(name=="row"||name=="col"||name=="column")return property(name,Value::integer(spec.type=="MSChart"?1:0));
+  if(name=="data"&&spec.type=="MSChart"){auto r=int64_t(number("row",1))-1,c=int64_t(number("column",1))-1;range(r,grid.size());range(c,grid[size_t(r)].size());return Value::string(grid[size_t(r)][size_t(c)]);}
   if(name=="text"&&isGrid(*this)){auto r=int64_t(number("row")),c=int64_t(number("col"));range(r,grid.size());range(c,grid[size_t(r)].size());return Value::string(grid[size_t(r)][size_t(c)]);}
   if(name=="datasource"&&isGrid(*this))return Value::object(dataBinding?dataBinding->source:nullptr);
   if(name=="currentx")return Value::real(currentX,Type::Single);if(name=="currenty")return Value::real(currentY,Type::Single);
@@ -294,13 +296,15 @@ void GtkControl::set(Runtime& rt,const std::string& raw,Value value,bool) {
   if(name=="text"&&isGrid(*this)){writeCell(size_t(number("row")),size_t(number("col")),value);return;}
   if(name=="listindex"){auto n=value.integral();if(n< -1||n>=int64_t(list.size()))fail(380);auto prior=number("listindex",-1);properties[name]=Value::integer(n);selected.clear();if(n>=0)selected.insert(size_t(n));reloadList();if(editor()&&n>=0)editSetText(list[size_t(n)]);if(prior!=n)event("click");return;}
   if(name=="rows"||name=="cols"||name=="rowcount"||name=="columncount") {if(dataBinding)fail(380,"Bound grid shape is owned by its Recordset");auto n=value.integral();if(n<0||n>100000)fail(380);auto rows=name=="rows"||name=="rowcount"?size_t(n):grid.size(),cols=name=="cols"||name=="columncount"?size_t(n):(grid.empty()?0:grid[0].size());resizeGrid(rows,cols);updateColumns();reloadList();return;}
-  if(name=="row"||name=="col"){auto n=value.integral();range(n,name=="row"?grid.size():grid.empty()?0:grid[0].size());properties[name]=Value::integer(n);return;}
+  if(name=="data"&&spec.type=="MSChart"){writeCell(size_t(number("row",1)-1),size_t(number("column",1)-1),value);if(view)gtk_widget_queue_draw(view);return;}
+  if(name=="row"||name=="col"||name=="column"){auto n=value.integral();range(n-(spec.type=="MSChart"?1:0),name=="row"?grid.size():grid.empty()?0:grid[0].size());properties[name]=Value::integer(n);return;}
   if(name=="tab"&&GTK_IS_NOTEBOOK(widget)){auto n=value.integral();range(n,items("tabs")->values.size());gtk_notebook_set_current_page(GTK_NOTEBOOK(widget),int(n));properties[name]=Value::integer(n,Type::Integer);return;}
   if(name=="selecteditem") {auto item=std::dynamic_pointer_cast<GtkItem>(value.asObject());if(!item||item->owner.lock().get()!=this)fail(380);if(GTK_IS_NOTEBOOK(widget)){gtk_notebook_set_current_page(GTK_NOTEBOOK(widget),int(item->get(rt,"index").integral()-1));return;}auto found=treePaths.find(item->identity);if(found==treePaths.end())fail(380);auto* path=gtk_tree_path_new_from_string(found->second.c_str());gtk_tree_view_expand_to_path(GTK_TREE_VIEW(widget),path);gtk_tree_view_set_cursor(GTK_TREE_VIEW(widget),path,nullptr,FALSE);gtk_tree_path_free(path);return;}
   if(name=="currentx"||name=="currenty"){if(name=="currentx")currentX=value.floating();else currentY=value.floating();return;}
   if(name=="picture"){if(value.type!=Type::Object)fail(13);auto object=std::get<ObjectPtr>(value.payload);if(object&&!std::dynamic_pointer_cast<GtkPicture>(object))fail(13);properties[name]=value;if(view)gtk_widget_queue_draw(view);return;}
   const std::set<std::string> supported={"caption","text","left","top","width","height","visible","enabled","tag","tooltiptext","backcolor","forecolor","fontname","fontsize","fontbold","fontitalic","fontunderline","fontstrikethru","alignment","locked","maxlength","value","min","max","smallchange","largechange","increment","interval","checked","tabindex","tabstop","scalemode","scaleleft","scaletop","scalewidth","scaleheight","drawstyle","drawmode","drawwidth","fillcolor","fillstyle","bordercolor","borderwidth","shape","borderstyle","stretch","sorted","multiselect","gridlines","fullrowselect","fixedrows","fixedcols","rowsel","colsel","simpletext","style","filter","filterindex","filename","dialogtitle","initdir","defaultext","flags","cancelerror","path","pattern","drive","redraw","mousepointer","color","fontcharset","anchor","dock","autoredraw","keypreview"};
-  if(!supported.count(name))fail(438,"Unsupported GTK property "+spec.type+"."+raw);
+  if(!supported.count(name)&&!(spec.type=="MSChart"&&(name=="charttype"||name=="rowlabel"||name=="columnlabel")))fail(438,"Unsupported GTK property "+spec.type+"."+raw);
+  if(name=="charttype"&&value.integral()!=1&&value.integral()!=3&&value.integral()!=5&&value.integral()!=14)fail(453,"GTK MSChart supports 2D bar (1), line (3), area-line (5), and pie (14) chart types");
   if(name=="interval"&&(value.integral()<0||value.integral()>65535))fail(380);
   if(name=="maxlength"&&value.integral()<0)fail(380);
   if(name=="value"&&(spec.type=="CheckBox"||spec.type=="OptionButton")&&(value.integral()<0||value.integral()>(spec.type=="CheckBox"?2:1)))fail(380);
@@ -314,8 +318,17 @@ void GtkControl::set(Runtime& rt,const std::string& raw,Value value,bool) {
     else if(name=="simpletext"&&spec.type=="StatusBar"){auto panels=items("panels");if(panels->values.empty())panels->invoke(rt,"add",{Arg(Value::missing()),Arg(Value::string(u"")),Arg(value)});else panels->values.front()->set(rt,"text",value);}
     else refresh();
   }catch(...){properties[name]=previous;throw;}
+  if(name=="value"&&previous.number()!=value.number()) {
+    if(spec.type=="CheckBox"||(spec.type=="OptionButton"&&value.truth()))event("click");
+    else if(GTK_IS_RANGE(widget)||GTK_IS_SPIN_BUTTON(widget)||GTK_IS_CALENDAR(widget))event("change");
+  }
 }
 Ref GtkControl::reference(Runtime& rt,const std::string& raw,Args args) {
+  if(dataBinding&&lower(raw)=="textmatrix"&&args.size()==2) {
+    auto row=args[0].value.integral(),column=args[1].value.integral();if(row<0||column<0||size_t(row)>=grid.size()||size_t(column)>=grid[size_t(row)].size())fail(381);
+    auto binding=dataBinding;auto original=Value::string(grid[size_t(row)][size_t(column)]);std::optional<RecordsetGridEdit> token;if(row)token=binding->begin(size_t(row),size_t(column));std::weak_ptr<GtkControl> weak=self();
+    return {[original]{return original;},[weak,binding,token](Value value,bool){auto c=weak.lock();if(!c||c->disposed)fail(91);if(c->dataBinding!=binding||!binding->active)fail(3218,"Grid binding changed during assignment");if(!token)fail(381);binding->commit(*token,std::move(value));},"string",false,false};
+  }
   if(args.empty())return Object::reference(rt,raw,{});auto c=self();auto name=lower(raw);
   return {[c,&rt,name,args]{return c->invoke(rt,name,args);},[c,&rt,name,args](Value value,bool){auto all=args;all.emplace_back(std::move(value));c->invoke(rt,"let:"+name,all);},"variant",false,false};
 }
