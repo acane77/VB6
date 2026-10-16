@@ -1,4 +1,5 @@
 import {winuiThemeTokens} from './winui-theme-css.mjs';
+import {macos26ThemeTokens,macos26AccessibilityCss} from './macos26-theme-css.mjs';
 import {themeDetailTokens} from './theme-detail-css.mjs';
 import {iconPackTokens} from './icon-pack-css.mjs';
 /** IDE-only palette generation; never concatenate this into vb6-controls.css. */
@@ -23,9 +24,10 @@ export function renderIdeThemePalettes() {
     css+=iconPackTokens(theme);
     css+=themeDetailTokens(theme);
     css+=winuiThemeTokens(theme);
+    css+=macos26ThemeTokens(theme);
     css+=`  color-scheme: ${theme.scheme};\n}\n`;
   }
-  return css;
+  return css+macos26AccessibilityCss('ide');
 }
 export function writeIdeThemePalettes() {
   fs.writeFileSync(new URL('../src/theme/ide-palettes.css',import.meta.url),renderIdeThemePalettes());
