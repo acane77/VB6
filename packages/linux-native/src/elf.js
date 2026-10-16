@@ -11,7 +11,7 @@ export const LINUX_METADATA_FLAG=0x02000000;
 const PAGE=4096,PHDR_SIZE=56,SHDR_SIZE=64,encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true});
 const align=(value,unit)=>Math.ceil(value/unit)*unit;
 const bounded=(value,min,max,message='Unsafe ELF range')=>{if(!Number.isSafeInteger(value)||value<min||value>max)throw new Error(message);return value;};
-const libraries=/^lib(?:gtk-3|gdk-3|pangocairo-1\.0|pango-1\.0|gobject-2\.0|glib-2\.0|gio-2\.0|gdk_pixbuf-2\.0|cairo|cairo-gobject|harfbuzz|atk-1\.0|stdc\+\+|gcc_s|m|c|dl|pthread|fontconfig|freetype)\.so(?:\.\d+)*$/;
+const libraries=/^lib(?:gtk-3|gdk-3|pangocairo-1\.0|pango-1\.0|gobject-2\.0|glib-2\.0|gio-2\.0|gdk_pixbuf-2\.0|cairo|cairo-gobject|harfbuzz|atk-1\.0|stdc\+\+|gcc_s|m|c|dl|pthread|fontconfig|freetype|z)\.so(?:\.\d+)*$/;
 export function inspectLinuxELF(input,{requireProject=false}={}){
   const bytes=input instanceof Uint8Array?input:new Uint8Array(input);
   if(bytes.length<64||bytes.length>LINUX_LIMITS.imageBytes)throw new Error('Invalid or excessive ELF image');
@@ -28,7 +28,7 @@ export function inspectLinuxELF(input,{requireProject=false}={}){
     const at=programOffset+i*PHDR_SIZE,s={index:i,command:at,type:u32(at),flags:u32(at+4),offset:u64(at+8),address:u64(at+16),physicalAddress:u64(at+24),fileSize:u64(at+32),size:u64(at+40),alignment:u64(at+48)};
     range(s.offset,s.fileSize);bounded(s.address+s.size,0,Number.MAX_SAFE_INTEGER);
     if(s.type===1){
-      if(s.fileSize>s.size||s.alignment<PAGE||(s.alignment&(s.alignment-1))!==0||s.offset%s.alignment!==s.address%s.alignment)throw new Error('Invalid ELF LOAD alignment or size');
+      if(s.fileSize>s.size||s.alignment<PAGE||s.alignment>2**30||(s.alignment&(s.alignment-1))!==0||s.offset%s.alignment!==s.address%s.alignment)throw new Error('Invalid ELF LOAD alignment or size');
       if((s.flags&3)===3||!(s.flags&4))throw new Error('ELF executable mappings must be readable and never writable');
       if(segments.some(p=>p.type===1&&s.size&&p.size&&s.address<p.address+p.size&&p.address<s.address+s.size))throw new Error('Overlapping ELF virtual LOAD mappings');
     }
