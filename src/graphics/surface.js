@@ -116,7 +116,12 @@ export class GraphicsSurface extends RetainedGraphics {
     this.unbindDocument();this.themeDocument=document;this.bindDocument();this.theme=getTheme(this.container).id;
     this.resizeObserver.disconnect();this.resizeObserver=new document.defaultView.ResizeObserver(()=>this.scheduleResize());this.resizeObserver.observe(this.container);
     if(changed){
-      this.dropRasterCaches();this.colorContext=null;this.colorCache=null;this.vertexData=null;this.releaseGPU();
+      this.dropRasterCaches();this.colorContext=null;this.colorCache=null;
+      // Color resolution and device resources belong to the adopted document.
+      // Retire payload AND validity keys together: unchanged dimensions/theme
+      // must not return a null vertex payload from the former document's cache.
+      this.vertexData=this.vertexCommands=this.vertexKey=null;
+      this.triangleCommands=this.triangleKey=null;this.releaseGPU();
       if(this.requestedBackend!=='canvas2d')this.gpuReady=this.initializeGPU();
     }
     this.resize();
@@ -157,7 +162,7 @@ export class GraphicsSurface extends RetainedGraphics {
   }
   vertices(){
     const key=[this.commands.length,this.width,this.height,this.grid,this.theme,this.replayEpoch].join(':');
-    if(this.vertexCommands===this.commands&&this.vertexKey===key)return this.vertexData;
+    if(this.vertexData&&this.vertexCommands===this.commands&&this.vertexKey===key)return this.vertexData;
     const grid=this.grid?Math.ceil(this.width/this.grid)*Math.ceil(this.height/this.grid):0;
     if(this.commands.length+grid>58000)throw new RangeError('Graphics triangle budget exceeded');
     const data=new Float32Array((this.commands.length+grid)*36);let offset=0;

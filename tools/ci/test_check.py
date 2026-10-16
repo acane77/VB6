@@ -55,6 +55,9 @@ class WorkflowAuditTests(unittest.TestCase):
     def test_new_linux_test_is_discovered_automatically(self):
         (self.root/'tests/linux-additional.test.mjs').write_text('')
         self.assertIn('linux-additional.test.mjs',check.audit(self.root)['linuxNodeTests'])
+    def test_tui_admission_tests_cannot_be_omitted(self):
+        self.reject(lambda w:[s.update({'run':s['run'].replace('python tools/ci/test_tui_acceptance.py','')})
+                              for s in w['jobs']['hygiene']['steps'] if 'run' in s])
     def test_compute_reference_dependency_required(self):
         self.reject(lambda w:w['jobs']['compute-gpu'].update({'needs':['hygiene']}))
     def test_compute_shader_execution_cannot_be_removed(self):
@@ -92,6 +95,7 @@ class WorkflowAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Duplicate YAML'):check.audit(self.root)
     def test_path_filtered_required_workflow_rejected(self):self.reject(lambda w:w['on'].update({'pull_request':{'paths':['src/**']}}))
     def test_unowned_suite_rejected(self):self.reject(lambda w:w['jobs']['browser']['strategy']['matrix']['suite'].remove('intelligent-ui'))
+    def test_missing_tui_partition_rejected(self):self.reject(lambda w:w['jobs']['browser']['strategy']['matrix']['suite'].remove('tui-authoring'))
     def test_missing_project_authoring_rejected(self):self.reject(lambda w:w['jobs']['browser']['strategy']['matrix']['suite'].remove('project-authoring'))
     def test_dependency_cycle_rejected(self):self.reject(lambda w:w['jobs']['hygiene'].update({'needs':['test']}))
 if __name__=='__main__':unittest.main(verbosity=2)
