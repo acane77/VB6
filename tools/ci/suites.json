@@ -20,7 +20,8 @@
     "browser-common-automation-tests.py",
     "browser-windows-tests.py",
     "browser-core-primitives.py",
-    "browser-graphics-tests.py"
+    "browser-graphics-tests.py",
+    "browser-rendering-resources.py"
   ],
   "integration-authoring": [
     "browser-classic-export-tests.py",
@@ -62,7 +63,8 @@
     "figma-advanced-editor-browser-tests.py"
   ],
   "code-gpu": [
-    "figma-editor-browser-tests.py"
+    "figma-editor-browser-tests.py",
+    "browser-rendering-resources.py"
   ],
   "project-authoring": [
     "native-project-browser-tests.py",

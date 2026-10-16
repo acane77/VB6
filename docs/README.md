@@ -30,8 +30,8 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [Testing](TESTING.md): setup, reproducible checks and validation boundaries.
 - [Build tools](../tools/README.md) and [test scope](../tests/README.md): maintained
   entry points, fixtures and cleanup rules.
-- [Compatibility](COMPATIBILITY.md) and [user guide](USER_GUIDE.md): supported
-  behavior, deliberate limits and workflows to preserve.
+- [Compatibility](COMPATIBILITY.md), [control compatibility](CONTROLS-COMPATIBILITY.md)
+  and [user guide](USER_GUIDE.md): supported behavior, deliberate limits and workflows to preserve.
 
 ## Language, runtime and project files
 
@@ -84,6 +84,8 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [HTML retention and designer measurements](HTML-RENDERING-PERFORMANCE.md): DOM identity, read-before-write batching and browser validation.
 - [UI rendering backends](RENDERING.md): settings, native islands, lifecycle,
   performance measurement and strict acceptance; [rendering source attribution](RENDERING-SOURCES.md).
+- [Rendering resource contracts](RENDERING-RESOURCES.md): atlas lifetime, partial uploads,
+  rounded paint, text fidelity, suspension and exact browser qualification.
 - [GPU startup and recovery](RENDERING-TROUBLESHOOTING.md): adapter/context failures,
   live diagnostics, saved-policy retry and environment limitations.
 - [IDE themes](IDE-THEMES.md), [application themes](APPLICATION-THEMES.md) and
@@ -104,6 +106,7 @@ These guides describe the implemented system, not complete native VB6 parity.
   [native compiler and optimizer](native-compiler-optimization.md),
   [direct Win32 AOT](WIN32-AOT.md) and [export troubleshooting](WIN32-EXPORT-TROUBLESHOOTING.md).
 - [Private native services](WIN32-PRIVATE-SERVICES.md): demand-driven linkage, pointer primitives and owned-frame performance.
+- [Native sequential file I/O](WIN32-SEQUENTIAL-IO.md): Input/Line Input/Write semantics, ownership, encoding and execution gates.
 - [Native strings and control metadata](NATIVE-STRING-METADATA.md): counted BSTRs,
   Replace/InStr binding, Tag/Name lifetime and HWND-backed TabStop.
 - [Win32 controls](WIN32-CONTROLS.md): native AOT control coverage, property and stream ownership, layout integration, output dependencies and Windows execution checks.
