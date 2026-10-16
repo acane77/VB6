@@ -186,7 +186,12 @@ class ApplicationThemes(MacOSCompositeChecks, MacOS26CompatibilityChecks, X11App
   self.assertEqual(set(self.active_pack(self.page.locator('.vb-mdi-child').last)),{'x11'})
   self.page.screenshot(path=str(REPORT/'mdi-themed-children.png'))
  def open_ide(self):
-  page=self.context.new_page();self.load(ROOT/'dist'/'VB6-Studio-Web.html',page);page.wait_for_function('typeof vb6Studio==="object"');return page
+  page=self.context.new_page();path=ROOT/'dist'/'VB6-Studio-Web.html'
+  if MEMORY:self.load(path,page)
+  else:page.goto(self.base+str(path.relative_to(ROOT)),wait_until='commit',timeout=30000)
+  # WebKit can leave this large inline document in "loading" after the IDE is
+  # usable. Await its real API/shell, with a startup budget separate from actions.
+  page.wait_for_function('typeof vb6Studio==="object"&&document.querySelector(".ide-shell")',polling=100,timeout=30000);return page
  def options(self,page):
   page.evaluate('()=>{void vb6Studio.command("options");}');page.get_by_role('tab',name='General',exact=True).click()
  def test_options_cancel_commit_undo_and_independent_ide_palette(self):

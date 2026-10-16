@@ -395,8 +395,13 @@ class Themes(X11IdeChecks, unittest.TestCase):
             self.record(theme,narrowDialogInsideViewport=True)
     @unittest.skipIf(MEMORY, 'File navigation unavailable in restricted memory transport; exercised by CI')
     def test_standalone_file(self):
-        self.page.goto((ROOT/'dist/VB6-Studio-Web.html').as_uri())
-        self.page.wait_for_function('typeof vb6Studio==="object"')
+        # WebKit may keep this large inline document's load event pending after
+        # the IDE is interactive. Assert the real readiness/Options contract,
+        # as the native-export browser suites do, without waiting on that event.
+        self.page.goto((ROOT/'dist/VB6-Studio-Web.html').as_uri(),wait_until='commit')
+        # Only bundle startup gets a larger parsing budget. Real Options
+        # interactions keep the suite's ordinary 8s limit.
+        self.page.wait_for_function('typeof vb6Studio==="object"',polling=100,timeout=30000)
         self.set_theme('macos26-dark')
         self.assertEqual(self.page.locator('html').get_attribute('data-ide-theme'),'macos26-dark')
         self.record('standalone file:// Options')

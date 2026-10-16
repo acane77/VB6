@@ -71,12 +71,16 @@ class MacOS26CompatibilityChecks:
         search.fill('日本語')
         expect(status).to_have_text('5:日本語')
         # Playwright cannot drive the platform IME. Dispatch its DOM composition
-        # state to exercise the real input handler's Escape guard explicitly.
+        # state and legacy 229 signal through the real input/form key handlers.
         search.evaluate('''e=>{
             e.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true,data:'日本語'}));
             for(const key of ['Escape','Enter']){
-                e.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,isComposing:true}));
-                e.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,keyCode:229}));
+                const composing=new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,isComposing:true});
+                const legacy=new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,keyCode:229});
+                if(!composing.isComposing||legacy.keyCode!==229||legacy.isComposing)
+                    throw new Error('This browser did not construct the distinct IME regression signals');
+                e.dispatchEvent(composing);
+                e.dispatchEvent(legacy);
             }
             e.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:'日本語'}));
         }''')
