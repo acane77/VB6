@@ -328,6 +328,13 @@ Property groups, tree selection, editor/document tabs, tooltips, context menus,
 floating command bars, utility dialogs, and agent/MCP panels use the same local
 semantic roles. Editor text, document data, and designer artwork remain sharp.
 
+Delegated `ToolTipText` overlays retain the opening application's local palette,
+font and accessibility preferences after moving into the document overlay.
+They follow live application theme changes and release that binding when hidden.
+IDE command tooltips follow the IDE palette independently. The browser theme
+suite checks both ownership paths, including Classic help inside every optional
+IDE theme and live macOS light/dark changes while a tooltip remains open.
+
 Chrome materials use bounded backdrop filtering. Reduced transparency,
 increased contrast, forced colors and a missing backdrop-filter implementation
 switch those surfaces to opaque resources. Each bar/pane owns its filter;

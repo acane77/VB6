@@ -177,9 +177,15 @@ export function patchWinUISource(text,before,after,compiled) {
       if(!Object.hasOwn(a.properties,role)&&!Object.hasOwn(b.properties,role))continue;
       if(b.properties[color]===undefined)return null;
       const source=mapping.properties[role],nextRole=b.properties[role];
-      if(nextRole&&source&&!Object.hasOwn(overrides,role)&&!Object.hasOwn(overrides,color)&&b.properties[color]===macos26ColorFallback(nextRole)) {
+      if(nextRole&&source&&!Object.hasOwn(overrides,role)&&!Object.hasOwn(overrides,color)) {
         if(!replaceMapped(source,nextRole,source.encoding==='theme-resource'))return null;
         used.add(source.name);
+        // Choosing a semantic role in the Inspector does not rewrite an
+        // authored OLE fallback. Keep that exact fallback while making the
+        // changed role visible in the original consuming XAML expression.
+        if(b.properties[color]!==macos26ColorFallback(nextRole)) {
+          overrides[color]=b.properties[color];overrides[role]=nextRole;overridesChanged=true;
+        }
       } else {
         // An explicit native paint relinquishes a semantic binding. Keeping the
         // override in Designer.Properties preserves its exact OLE system color,

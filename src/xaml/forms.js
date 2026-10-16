@@ -189,6 +189,7 @@ export function compileFormXaml(text, {form:previous,settings={},schema=createVb
       if(['CommandButton','CheckBox','OptionButton','Label','Frame'].includes(type))set('Caption','');
       if(node.type.name==='SearchField')set('MacOSControlStyle','search');
       if(node.type.name==='Switch')set('MacOSControlStyle','switch');
+      if(node.type.name==='TabView')target.designerTabPages=true;
       if(node.type.name==='SecureField')set('PasswordChar','*');
       if(node.type.name==='TextEditor'){set('MultiLine',-1);set('ScrollBars',3);}
     }

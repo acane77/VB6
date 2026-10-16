@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {PRESENTATION_NS,XAML_NS,MACOS26_NS} from '../packages/xaml-compiler/src/index.js';
 import {compileFormXaml,createVb6XamlSchema,synchronizeFormXaml} from '../src/xaml/forms.js';
 import {macos26ColorFallback} from '../src/theme/macos26-resources.js';
+import {editDesignerProperties} from '../src/designer/property-model.js';
+import {MACOS26_COMPAT_XAML,macos26CompatibilityGallery} from './fixtures/macos26-compat-gallery.mjs';
 
 const schema=createVb6XamlSchema(),wrap=body=>`<a:Window xmlns="${PRESENTATION_NS}" xmlns:x="${XAML_NS}" xmlns:a="${MACOS26_NS}" x:Name="Form1">${body}</a:Window>`;
 const load=text=>{const r=compileFormXaml(text,{schema});assert.equal(r.success,true,JSON.stringify(r.diagnostics));return r.form;};
@@ -39,6 +41,28 @@ test('direct semantic role edits preserve attached namespace and recompute fallb
   const text=wrap('<a:Button x:Name="B" a:Appearance.ForegroundRole="labelColor"/>'),a=load(text),b=structuredClone(a);
   Object.assign(node(b).properties,{MacOSForegroundRole:'linkColor',ForeColor:macos26ColorFallback('linkColor')});
   const next=verify(text,a,b);assert.match(next,/a:Appearance.ForegroundRole="linkColor"/);assert.doesNotMatch(next,/Designer.Properties/);
+});
+
+test('role-only Inspector edits update the consuming expression and preserve its exact OLE fallback',()=>{
+  const text=wrap('<a:TextField x:Name="B" Foreground="{ThemeResource macOS.secondaryLabelColor}"/>'),a=load(text);
+  const b=editDesignerProperties(a,[node(a).id],{MacOSForegroundRole:'labelColor'});
+  const next=verify(text,a,b);assert.match(next,/Foreground="\{ThemeResource macOS.labelColor\}"/);assert.match(next,/Designer.Properties/);
+  assert.equal(node(b).properties.ForeColor,macos26ColorFallback('secondaryLabelColor'));
+});
+
+test('macOS TabView is already materialized before unrelated Inspector edits so rich alias source stays intact',()=>{
+  const settings={anchoring:true},initial=macos26CompatibilityGallery().modules[0].form;
+  const loaded=compileFormXaml(MACOS26_COMPAT_XAML,{schema,settings,form:initial});assert.equal(loaded.success,true,JSON.stringify(loaded.diagnostics));
+  let a=loaded.form,text=MACOS26_COMPAT_XAML;assert.equal(node(a,'Pages').designerTabPages,true);
+  for(const [key,value] of [['PlaceholderText','Find preferences'],['MacOSControlSize','extraLarge'],['MacOSForegroundRole','labelColor']]) {
+    const b=editDesignerProperties(a,[node(a,'Search').id],{[key]:value});assert.ok(b);
+    const result=synchronizeFormXaml(text,a,b,{schema,settings});assert.equal(result.regenerated,false,key);
+    const recompiled=compileFormXaml(result.text,{schema,settings,form:b});assert.equal(recompiled.success,true,JSON.stringify(recompiled.diagnostics));assert.deepEqual(recompiled.form,b);
+    a=b;text=result.text;
+  }
+  assert.match(text,/<mac:TabView/);assert.match(text,/<mac:SearchField/);assert.match(text,/PlaceholderString="Find preferences"/);
+  assert.match(text,/ControlSize="extraLarge"/);assert.match(text,/Foreground="\{ThemeResource macOS.labelColor\}"/);
+  assert.match(text,/<!-- Keep this authored macOS vocabulary/);
 });
 
 for(const [name,color] of [['literal color',0x563412],['same system fallback',macos26ColorFallback('labelColor')]])test('explicit '+name+' removes semantic role without losing the authored source',()=>{
