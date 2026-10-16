@@ -1,3 +1,4 @@
+import {extendFixedStringCalls} from './win32-fixed-string-call-fixture.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -74,6 +75,7 @@ End Function`);
   add('For i = 1 To 2000\nOn Error Resume Next\nCall ChangeAndFail("temporary" & CStr(i))\nErr.Clear\nOn Error GoTo 0\nNext');
   check('StringCopy("after-errors") = "after-errors"', '2000 failed String reference calls leave heap and error frames usable');
   check('Suffixed() = "default" And Suffixed(text:="named") = "named"', 'optional typed suffix parameter resolves named and omitted binding');
+  const fixedDeclarations=extendFixedStringCalls({add,check,procedures});
   add('ExitProcess 0');
   p.modules=[{id:'entry',name:'Entry',kind:'module',code:`Option Explicit
 Private Declare Sub ExitProcess Lib "kernel32" (ByVal code As Long)
@@ -84,6 +86,7 @@ Private Declare Function MulDiv Lib "kernel32" (ByVal number As Long, ByVal nume
 Private Const Seed As Long = 3
 Private trace As Long
 Private pinned() As Long
+${fixedDeclarations}
 ${procedures.join('\n')}
 Private Function Mixed(Optional ByVal count As Integer = 6, Optional ByVal money As Currency = 4.125@, Optional ByVal factor As Double = 0.25, Optional ByRef unused As Byte = 2, Optional ByVal tail As String = "ok") As Currency
  If unused <> 2 Or tail <> "ok" Then ExitProcess 230
@@ -229,14 +232,14 @@ End Sub`});
 }
 export function writeCallFixtures(directory='validation/calls') {
   fs.mkdirSync(directory,{recursive:true});const reports=[];
-  for(const create of [callFixture,callPropertiesFixture]) {
-    const {project,checks}=create(),result=compileWin32(project);
+  for(const create of [callFixture,callPropertiesFixture])for(const optimization of [0,1,2]) {
+    const {project,checks}=create(),result=compileWin32(project,{optimization}),name=project.name+'-O'+optimization;
     const sha256=createHash('sha256').update(result.bytes).digest('hex');
-    fs.writeFileSync(path.join(directory,project.name+'.exe'),result.bytes);
-    fs.writeFileSync(path.join(directory,project.name+'.vb6web'),JSON.stringify(project,null,2)+'\n');
-    const report={...result.report,name:project.name,sha256,checks};
-    fs.writeFileSync(path.join(directory,project.name+'.build.json'),JSON.stringify(report,null,2)+'\n');
-    console.log(JSON.stringify({name:project.name,bytes:result.bytes.length,checks:checks.length,sha256}));
+    fs.writeFileSync(path.join(directory,name+'.exe'),result.bytes);
+    fs.writeFileSync(path.join(directory,name+'.vb6web'),JSON.stringify(project,null,2)+'\n');
+    const report={...result.report,name,optimizationLevel:optimization,sha256,checks};
+    fs.writeFileSync(path.join(directory,name+'.build.json'),JSON.stringify(report,null,2)+'\n');
+    console.log(JSON.stringify({name,bytes:result.bytes.length,checks:checks.length,sha256}));
     reports.push(report);
   }
   return reports;

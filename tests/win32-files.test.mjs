@@ -17,10 +17,10 @@ test('original Order Entry sample compiles unchanged at every optimization level
   for(const optimization of [0,1,2])assert.equal(compileWin32(p,{optimization}).report.target,'win32-aot');
   assert.equal(JSON.stringify(p),before);
 });
-for(const mode of ['Input','Binary','Random'])test('unlowered Open mode remains an explicit compiler diagnostic: '+mode,()=>{
+for(const mode of ['Binary','Random'])test('unlowered Open mode remains an explicit compiler diagnostic: '+mode,()=>{
   assert.throws(()=>compile('Open "test" For '+mode+' As #1'),/Native sequential Open currently lowers/);
 });
-for(const body of ['Dim n As Long\nn=FreeFile(0,1)','Dim n As Long\nn=FreeFile(unknown:=0)','Write #1, "csv"','Open "test" For Output Access Read As #1','Open "test" For Append Access Read Write As #1'])test('invalid or unlowered native I/O is rejected: '+body,()=>assert.throws(()=>compile(body)));
+for(const body of ['Dim n As Long\nn=FreeFile(0,1)','Dim n As Long\nn=FreeFile(unknown:=0)','Open "test" For Output Access Read As #1','Open "test" For Append Access Read Write As #1'])test('invalid or unlowered native I/O is rejected: '+body,()=>assert.throws(()=>compile(body)));
 test('user FreeFile function shadows the intrinsic and does not allocate a native file table',()=>{
   const a=compileWin32(project('Function FreeFile() As Long\nFreeFile=123\nEnd Function\nSub Main\nDim n As Long\nn=FreeFile()\nEnd Sub'));
   assert.ok(!a.report.imports.some(i=>i.symbol==='GetFileInformationByHandle'));

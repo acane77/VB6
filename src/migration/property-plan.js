@@ -1,4 +1,5 @@
 import {key, identifier} from './names.js';
+import {defaultMember} from './default-members.js';
 
 /** A CLR property cannot express independent Let/Set dispatch or mutable index
  * arguments. Keep ordinary properties native; lower only those contracts to
@@ -27,13 +28,13 @@ export function accessorReference(symbol, context, accessor = 'get') {
   return identifier(accessorName(symbol.name, accessor));
 }
 
-/** Expand a statically known default indexed property before ordinary call
+/** Expand a statically known default property or function before ordinary call
  * binding. Dynamic Object/COM dispatch deliberately remains outside this proof. */
 export function defaultPropertyCall(node, context) {
   if (node?.kind !== 'call') return null;
   const receiver = context.resolve(node.callee);
   if (!receiver || receiver.procedure || receiver.module || receiver.control || receiver.paramArray || receiver.bounds != null) return null;
-  const owner = context.compiled.modules.get(key(receiver.type));
-  if (!owner?.defaultMember || !propertyPlan(owner, owner.defaultMember, context)) return null;
-  return {...node, callee:{kind:'member', object:node.callee, name:owner.defaultMember}};
+  const member = defaultMember(receiver, context);
+  if (!member?.getter) return null;
+  return {...node, callee:{kind:'member', object:node.callee, name:member.name}};
 }

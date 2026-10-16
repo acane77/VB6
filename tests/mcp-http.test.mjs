@@ -4,7 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import {McpClient} from './helpers/mcp-client.mjs';
 import {HttpTransport} from './helpers/mcp-transports.mjs';
-import {MCP_VERSION, MCP_META, requestHeaders} from '../src/mcp/protocol.js';
+import {MCP_VERSION, MCP_META, MCP_LIMIT, requestHeaders} from '../src/mcp/protocol.js';
 import {McpServer} from '../src/mcp/server.js';
 import {BrowserBridge} from '../src/mcp/bridge-client.js';
 import {createBridge} from '../tools/mcp-bridge.mjs';
@@ -151,7 +151,7 @@ test('MCP companion: invalid UTF-8 is rejected rather than silently rewritten', 
 
 test('MCP bridge: tasks survive distinct modern HTTP requests and relay stdio; detach revokes handles', async t => {
   const authority=new AbortController(),adapter=tinyAdapter();adapter.authoritySignal=authority.signal;
-  adapter.tools.push({name:'vb6.agent.wait',inputSchema:{type:'object'},execute:async(_,ctx)=>{await new Promise(resolve=>setTimeout(resolve,30));return {matched:!ctx.signal.aborted};}});
+  adapter.tools.push({name:'vb6.agent.wait',annotations:{readOnlyHint:true},inputSchema:{type:'object'},execute:async(_,ctx)=>{await new Promise(resolve=>setTimeout(resolve,30));return {matched:!ctx.signal.aborted};}});
   const bridge=await createBridge({port:0}),server=new McpServer(adapter),browser=new BrowserBridge(server,{url:bridge.url,token:bridge.ownerToken});
   const httpTransport=new HttpTransport(bridge.url+'/mcp',{token:bridge.clientToken});
   const stdio=new NodeStdioTransport({command:process.execPath,args:[path.resolve('tools/mcp-stdio.mjs'),'--url',bridge.url+'/mcp'],env:{...process.env,VB6_MCP_TOKEN:bridge.clientToken}});
@@ -174,4 +174,20 @@ test('MCP stdio: invalid UTF-8 is rejected instead of silently replacing bytes',
   child.stdin.on('error',()=>{});child.stdin.end(Buffer.from([0xc3,0x28,0x0a]));
   await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{child.kill();reject(Error('stdio fixture did not terminate'));},5000);child.once('exit',()=>{clearTimeout(timer);resolve();});child.once('error',reject);});
   assert.equal(stderr,'');assert.equal(JSON.parse(stdout.trim()).error.code,-32700);
+});
+test('companion requires the exact JSON media type, not an application/json prefix',async t=>{
+  const bridge=await createBridge({port:0});t.after(()=>bridge.close());
+  for(const type of ['application/jsonp','application/json-seq','text/json','']){
+    const response=await fetch(bridge.url+'/bridge/attach',{method:'POST',headers:{Authorization:'Bearer '+bridge.ownerToken,'Content-Type':type},body:'{"id":"test-browser"}'});assert.equal(response.status,415,type);
+  }
+  const response=await fetch(bridge.url+'/bridge/attach',{method:'POST',headers:{Authorization:'Bearer '+bridge.ownerToken,'Content-Type':'Application/JSON; charset=utf-8'},body:'{"id":"test-browser"}'});assert.equal(response.status,200);
+});
+test('companion applies the 32 MiB queue limit to UTF-8 bytes rather than UTF-16 characters',async t=>{
+  const bridge=await createBridge({port:0});t.after(()=>bridge.close());
+  assert.equal((await fetch(bridge.url+'/bridge/attach',{method:'POST',headers:{Authorization:'Bearer '+bridge.ownerToken,'Content-Type':'application/json'},body:'{"id":"test-browser"}'})).status,200);
+  const message={jsonrpc:'2.0',method:'notifications/test',params:{...modernParams,text:'🙂'.repeat(1000000)}};
+  const headers={'Content-Type':'application/json',Authorization:'Bearer '+bridge.clientToken,...requestHeaders(message,MCP_VERSION)};
+  const body=JSON.stringify(message);assert.ok(Buffer.byteLength(body)>4000000&&Buffer.byteLength(body)<MCP_LIMIT);
+  for(let i=0;i<8;i++)assert.equal((await fetch(bridge.url+'/mcp',{method:'POST',headers,body})).status,202,'queue item '+i);
+  const rejected=await fetch(bridge.url+'/mcp',{method:'POST',headers,body});assert.equal(rejected.status,503);assert.match((await rejected.json()).error,/queue is full/);
 });

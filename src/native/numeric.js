@@ -1,3 +1,4 @@
+import {commitNativeFixedStrings} from './fixed-string-references.js';
 import {inlinePrivateMemoryCall} from './private-memory.js';
 import {lowerNativeParamArray} from './param-arrays.js';
 import {planNativeInStrArguments} from './call-plan.js';
@@ -148,7 +149,7 @@ export const nativeNumericMethods = {
   },
   nativeTypedCall(target,plan) {
     if(inlinePrivateMemoryCall(this,target,plan))return;
-    const x=this.x,signature=target.proc||target,callPins=[],callStrings=[],marshalledStrings=[],slots=new Array(signature.params.length);
+    const x=this.x,signature=target.proc||target,callPins=[],callStrings=[],fixedStrings=[],marshalledStrings=[],slots=new Array(signature.params.length);
     // Stage in the caller's frame: arguments are evaluated exactly once in source
     // order, even with mixed 4/8-byte ABI slots, recursion and array reallocation.
     plan.order.forEach(({node,index:i,omitted})=>{
@@ -165,7 +166,8 @@ export const nativeNumericMethods = {
         if(!target.proc||!p.byRef||!a?.nativeArray||a.elementOf||key(a.type)!==key(p.type))this.fail('ByRef array argument must have the exact declared element type');
         if(a.fixedLength)this.fail('Fixed-length String whole-array arguments are not yet lowered');this.rawStorageAddress(a);
       }else if(p.byRef){
-        const {pin,temporary}=this.nativeReferenceArgument(p,node,omitted);
+        const {pin,temporary,fixedString}=this.nativeReferenceArgument(p,node,omitted);
+        if(fixedString)fixedStrings.push(fixedString);
         if(pin)callPins.push(pin);if(temporary&&key(temporary.type)==='string')callStrings.push(temporary);
       }else if(this.nativeObjectType(p.type)){this.nativeControlValue(node);this.checkNativeControlKind(this.nativeControlKind(p.type));}
       else if(this.nativeClassDescriptor(p.type)){this.nativeClassValue(node,this.nativeClassDescriptor(p.type));}
@@ -191,6 +193,9 @@ export const nativeNumericMethods = {
       if(key(signature.returnType)==='single')this.roundSingle();
       if(key(signature.returnType)==='date')x.call('native:date:validate');
     }else if(target.proc)this.checkNativeError();else this.captureNativeDllError();
+    // Adopt owned project String results before copy-back can allocate or fail.
+    if(target.proc&&signature.kind==='function'&&key(signature.returnType)==='string')this.ownString();
+    commitNativeFixedStrings(this,fixedStrings);
     // String returns transfer ownership of an ANSI byte-BSTR, not an arbitrary LPSTR.
     const ansiResult=!target.proc&&signature.kind==='function'&&key(signature.returnType)==='string'?this.ownString():null;
     if(marshalledStrings.length){
@@ -200,7 +205,6 @@ export const nativeNumericMethods = {
     if(ansiResult)this.nativeExternalStringResult(ansiResult);
     for(const pin of callPins)this.releaseArrayPin(pin);
     if(callStrings.length){x.push();for(const string of callStrings)this.clearStringStorage(string);x.emit(0x58);}
-    if(target.proc&&signature.kind==='function'&&key(signature.returnType)==='string')this.ownString();
     if(!target.proc){if(['integer','boolean'].includes(key(signature.returnType)))x.emit(0x0f,0xbf,0xc0);else if(key(signature.returnType)==='byte')x.emit(0x0f,0xb6,0xc0);}
   }
 };

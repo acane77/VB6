@@ -1,3 +1,4 @@
+import {defaultValueExpression} from './default-members.js';
 import {orderedCall} from './call-order.js';
 import {bindOptionalArguments, optionalDefault} from './optional-parameters.js';
 import {accessorReference, propertyPlan, defaultPropertyCall} from './property-plan.js';
@@ -13,12 +14,16 @@ const CONSTANTS=Object.freeze({vbmodal:'1',vbmodeless:'0',vbchecked:'1',vbunchec
   vbkeyback:'8',vbkeytab:'9',vbkeydelete:'46',vbkeyhome:'36',vbkeyend:'35',vbkeypageup:'33',vbkeypagedown:'34',
   vbtextcompare:'Global.Microsoft.VisualBasic.CompareMethod.Text',vbbinarycompare:'Global.Microsoft.VisualBasic.CompareMethod.Binary',
   vbobjecterror:'-2147221504',vbnullstring:'String.Empty',vbtrue:'-1',vbfalse:'0'});
+const RAW_INTRINSICS=new Set(['isobject','ismissing','isarray','iserror','isempty','isnull','typename','vartype','callbyname']);
 const VARIANT_TYPES=new Set(['object','variant']);
 export function expression(node, context, usage={}) {
   const replacement=context.hook('expression',{node,usage});if(replacement!==undefined)return replacement;
   if(!node)return 'Nothing';
   const e=(value,mode={})=>expression(value,context,mode);
   const expanded=defaultPropertyCall(node,context);if(expanded)return e(expanded,usage);
+  if(!usage.defaultExpanded&&!usage.receiver&&!usage.reference&&!usage.callee&&!usage.assignment&&!usage.argument){
+    const value=defaultValueExpression(node,context);if(value!==node)return e(value,{...usage,defaultExpanded:true});
+  }
   switch(node.kind) {
     case 'literal':
       if(node.value===null)return 'Global.System.DBNull.Value';
@@ -38,19 +43,19 @@ export function expression(node, context, usage={}) {
     case 'nothing': case 'empty': return 'Nothing';
     case 'missing': return usage.argument?'':context.runtime('VbMissing.Value');
     case 'named': return identifier(node.name)+':='+e(node.expr,{argument:true});
-    case 'byval': case 'group': return '('+e(node.expr)+')';
+    case 'byval': case 'group': return '('+e(node.expr,usage)+')';
     case 'with': return context.withReceiver||'';
     case 'addressOf': context.add('MIG_CALLBACK_ABI','AddressOf requires a typed unmanaged delegate and a verified calling convention.');return 'AddressOf '+qualified(node.name);
     case 'new': return 'New '+qualified(node.name)+'()';
-    case 'typeof': return '(TypeOf '+e(node.expr)+' Is '+context.netType(node.name)+')';
+    case 'typeof': return '(TypeOf '+e(node.expr,{reference:true})+' Is '+context.netType(node.name)+')';
     case 'unary': {
       const value=e(node.expr);
-      if(VARIANT_TYPES.has(key(context.type(node.expr))))return context.runtime('VbVariant.Unary')+'('+vbString(node.op)+', '+value+')';
+      if(VARIANT_TYPES.has(key(context.valueType(node.expr))))return context.runtime('VbVariant.Unary')+'('+vbString(node.op)+', '+value+')';
       return '('+(node.op==='not'?'Not ':node.op)+value+')';
     }
     case 'binary': {
-      const a=e(node.left),b=e(node.right),op=node.op;
-      if(VARIANT_TYPES.has(key(context.type(node.left)))||VARIANT_TYPES.has(key(context.type(node.right))))return context.runtime('VbVariant.Binary')+'('+vbString(op)+', '+a+', '+b+', '+(context.module.optionCompare==='text'?'True':'False')+')';
+      const op=node.op,a=e(node.left,{reference:op==='is'}),b=e(node.right,{reference:op==='is'});
+      if(op!=='is'&&(VARIANT_TYPES.has(key(context.valueType(node.left)))||VARIANT_TYPES.has(key(context.valueType(node.right)))))return context.runtime('VbVariant.Binary')+'('+vbString(op)+', '+a+', '+b+', '+(context.module.optionCompare==='text'?'True':'False')+')';
       if(op==='eqv')return '(Not ('+a+' Xor '+b+'))';
       if(op==='imp')return '((Not '+a+') Or '+b+')';
       return '('+a+' '+({and:'And',or:'Or',xor:'Xor',mod:'Mod',is:'Is',like:'Like'}[op]||op)+' '+b+')';
@@ -58,7 +63,7 @@ export function expression(node, context, usage={}) {
     case 'id': {
       const k=key(node.name),symbol=context.find(node.name);
       if(k==='me')return 'Me';
-      if(context.aliases.has(k)&&!(usage.callee&&k===key(context.proc?.name||'')))return context.aliases.get(k);
+      if(context.aliases.has(k)&&!(usage.callee&&!context.proc?.returnArray&&k===key(context.proc?.name||'')))return context.aliases.get(k);
       if(symbol){
         if(symbol.formMember)return e({kind:'member',object:{kind:'id',name:'Me'},name:symbol.name},usage);
         if(symbol.form)return context.runtime('VbForms.GetInstance')+'(Of '+qualified(symbol.name)+')()';
@@ -108,7 +113,8 @@ export function expression(node, context, usage={}) {
     case 'call': {
       const symbol=context.resolve(node.callee),k=node.callee.kind==='id'?key(node.callee.name):'';
       validateCallSemantics(node,symbol,context);
-      const native=nativeIntrinsic(node,context,e,usage);
+      const intrinsicEmit=(arg,mode={})=>e(arg,{...mode,reference:mode.reference||RAW_INTRINSICS.has(k)});
+      const native=nativeIntrinsic(node,context,intrinsicEmit,usage);
       if(native!==null)return native;
       const array=context.arrayPlan(symbol);
       if(array&&node.args.length){
@@ -137,7 +143,7 @@ export function expression(node, context, usage={}) {
         if(symbol?.external&&key(parameter?.type||'')==='string'&&arg.kind==='id'&&key(arg.name)==='vbnullstring')return 'Nothing';
         if(parameter?.byRef&&context.resolve(arg)?.autoNew&&context.resolve(arg)?.local)context.add('MIG_AS_NEW_BYREF','ByRef assignment to a lazy As New local requires a value-cell adapter.');
         if(parameter&&arg.kind!=='missing'&&key(parameter.type)==='currency'&&key(context.type(arg))!=='currency')return context.decimalCurrency?'CDec('+e(arg)+')':context.runtime('VbCurrency.FromObject')+'('+e(arg)+')';
-        return e(arg,{argument:true});
+        return symbol?e(arg,{argument:true}):intrinsicEmit(arg);
       };
       const ordered=orderedCall(node,symbol,context,emitArgument,e);
       if(ordered!==null)return ordered;
@@ -155,7 +161,7 @@ export function expression(node, context, usage={}) {
 }
 export function condition(node,context) {
   const value=expression(node,context);
-  const type=key(context.type(node));
+  const type=key(context.valueType(node));
   if(type==='boolean')return value;
   if(context.options.codeStyle==='native'&&(['byte','integer','long','single','double','decimal','string'].includes(type)||type==='currency'&&context.decimalCurrency))return 'CBool('+value+')';
   return context.runtime('VbVariant.Truth')+'('+value+')';
@@ -189,13 +195,14 @@ export function boundsArguments(bounds,context) {
 }
 export function assignment(target,value,context,{objectSet=false,asReturn=false}={}) {
   target=defaultPropertyCall(target,context)||target;
+  if(!objectSet)target=defaultValueExpression(target,context,{assignment:true});
   const callee=target.kind==='call'?target.callee:target,property=context.resolve(callee);
   const plan=property?.kind==='property'?propertyPlan(property.owner||context.module,property.name,context):null;
   // An assignment to the current getter's result variable is not a property set.
   const resultVariable=callee.kind==='id'&&context.aliases.has(key(callee.name));
   const accessor=plan?.methods&&!resultVariable&&!asReturn?accessorReference(property,context,objectSet?'set':'let'):null;
   const setter=accessor?plan[objectSet?'set':'let']:null;
-  const symbol=setter?.params.at(-1)||context.resolve(target);
+  const symbol=setter?.params.at(-1)||(target.kind==='id'?context.storage(target.name):context.resolve(target));
   if(symbol?.control&&!objectSet){const member=controlDefault(symbol.type,context);if(member)return assignment({kind:'member',object:target,name:member},value,context,{objectSet});}
   const native=context.arrayPlan(symbol),style=context.options.codeStyle==='native';
   let right=expression(value,context,{reference:objectSet,nativeArray:!!native}),left='';

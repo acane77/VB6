@@ -28,3 +28,6 @@ export {BREAKPOINTS, normalizeViewport};
 
 import {renderContentPreview} from './content-view.js';
 export {renderContentPreview};
+
+import {UIActionScope} from './action-scope.js';
+export {UIActionScope};

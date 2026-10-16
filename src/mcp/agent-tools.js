@@ -1,3 +1,5 @@
+import {DEFAULT_TASK_TOOLS, TASK_EXTENSION} from './tasks.js';
+import {SKILLS_EXTENSION} from './skill-catalog.js';
 import {installDataTools} from './agent-data.js';
 import {installBuildTools} from './agent-build.js';
 import {mergedProject} from '../project/import-merge.js';
@@ -50,7 +52,7 @@ export function installAgentTools(ide, adapter, {tool, consent, commit, changed,
   },{write:true,destructive});
   const resource = (uri,name,read)=>extraResources.set(uri,{name,read});
   add('agent.capabilities','Discover the entire supported agent surface, scope categories, current authority, command routing, and explicit host-only boundaries.',{},[],()=>output({
-    apiVersion:1,permissions:adapter.permissions?.snapshot(ide.project.id),scopes:AGENT_SCOPES,
+    apiVersion:2,tasks:{extension:TASK_EXTENSION,tools:[...DEFAULT_TASK_TOOLS],ttlMs:120000,perPrincipal:16},skills:{extension:SKILLS_EXTENSION,directoryRead:true},permissions:adapter.permissions?.snapshot(ide.project.id),scopes:AGENT_SCOPES,
     tools:adapter.tools.map(t=>({name:t.name,scope:agentScope(t.name),readOnly:t.annotations.readOnlyHint})),
     limits:{sourceOffsets:'zero-based UTF-16, end-exclusive',toolMessageBytes:8*1024*1024,sourceReadLines:1000,sourceReadCodeUnits:262144,defaultPage:100},
     boundaries:['No arbitrary JavaScript, shell, DOM or MCP permission/credential control.','Host file dialogs, clipboard, printing and popup creation require local browser interaction.','Native project formats and debugger live-edit semantics follow the existing IDE implementation.'],
@@ -155,6 +157,6 @@ export function installAgentTools(ide, adapter, {tool, consent, commit, changed,
   resource('vb6://files','Virtual file inventory',()=>adapter.tools.find(t=>t.name==='vb6.files.list').execute({},{}));
   resource('vb6://resources','Native resource inventory',()=>adapter.tools.find(t=>t.name==='vb6.resources.list').execute({},{}));
   const resources=adapter.resources.bind(adapter),read=adapter.readResource.bind(adapter);
-  adapter.resources=async()=>[...await resources(),...[...extraResources].map(([uri,r])=>({uri,name:r.name,mimeType:'application/json'}))];
+  adapter.resources=async context=>[...await resources(context),...[...extraResources].map(([uri,r])=>({uri,name:r.name,mimeType:'application/json'}))];
   adapter.readResource=async(uri,ctx={})=>{adapter.assertEnabled();checkAbort(ctx.signal);if(adapter.permissions.policy)throw new McpError(-32001,'Use permission-checked IDE tools for coding-agent resource access.');const r=extraResources.get(uri);return r?[{uri,mimeType:'application/json',text:JSON.stringify(await r.read(),null,2)}]:read(uri,ctx);};
 }

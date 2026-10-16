@@ -10,6 +10,7 @@ export const ADVANCED_EDITOR_DEFAULTS = Object.freeze({
   semanticHighlighting: true,
   inlayHints: true,
   codeLens: true,
+  inlineValues: true,
   vb6Endpoint: '',
   xamlEndpoint: '',
 });

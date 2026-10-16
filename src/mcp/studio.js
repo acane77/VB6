@@ -207,15 +207,17 @@ class McpPanel {
   catalogPage() {
     let tools=this.api.adapter.tools.map(({execute,...definition})=>definition).sort((a,b)=>a.name.localeCompare(b.name));
     let definitions=tools;const list=el('select',{size:12,'aria-label':'Exposed agent tools'}),detail=el('pre',{class:'mcp-description',tabindex:0,'aria-label':'Agent tool schema'});
-    const search=input('Filter exposed agent tools',{placeholder:'Name or description'}),type=el('select',{'aria-label':'Capability type'},...['Tools','Resources','Prompts'].map(v=>el('option',{value:v},v)));
+    const search=input('Filter exposed agent tools',{placeholder:'Name or description'}),type=el('select',{'aria-label':'Capability type'},...['Tools','Resources','Resource templates','Prompts','Skills'].map(v=>el('option',{value:v},v)));
     const scope=el('select',{'aria-label':'Capability scope'},el('option',{value:''},'All scopes'),...Object.keys(AGENT_SCOPES).map(v=>el('option',{value:v},v)));
     const count=el('span',{class:'tool-note',role:'status'});
-    const show=()=>{const def=definitions.find(t=>(t.name||t.uri)===list.value);detail.textContent=def?JSON.stringify(def,null,2):'No matching capabilities.';};
+    const identity=t=>t.uri||t.uriTemplate||t.name;
+    const label=t=>(t.name||t.uri||t.uriTemplate)+(type.value==='Skills'?' — '+t.uri:'');
+    const show=()=>{const def=definitions.find(t=>identity(t)===list.value);detail.textContent=def?JSON.stringify(def,null,2):'No matching capabilities.';};
     const render=()=>{
       const previous=list.value,query=search.value.toLowerCase();
-      const filtered=definitions.filter(t=>(t.name+' '+t.description+' '+(t.uri||'')).toLowerCase().includes(query)&&(!scope.value||type.value!=='Tools'||agentScope(t.name)===scope.value));
-      list.replaceChildren(...filtered.map(t=>el('option',{value:t.name||t.uri},(t.name||t.uri)+(t.annotations?(t.annotations.readOnlyHint?' — read':' — change'):''))));
-      list.value=filtered.some(t=>(t.name||t.uri)===previous)?previous:(filtered[0]?.name||filtered[0]?.uri||'');
+      const filtered=definitions.filter(t=>(t.name+' '+t.description+' '+(t.uri||t.uriTemplate||'')).toLowerCase().includes(query)&&(!scope.value||type.value!=='Tools'||agentScope(t.name)===scope.value));
+      list.replaceChildren(...filtered.map(t=>el('option',{value:identity(t)},label(t)+(t.annotations?(t.annotations.readOnlyHint?' — read':' — change'):''))));
+      list.value=filtered.some(t=>identity(t)===previous)?previous:(filtered[0]?identity(filtered[0]):'');
       count.textContent=filtered.length+' of '+definitions.length+' '+type.value.toLowerCase();show();
     };
     let generation=0;
@@ -223,7 +225,7 @@ class McpPanel {
       const current=++generation, selected=type.value;
       try {
         tools=this.api.adapter.tools.map(({execute,...definition})=>definition).sort((a,b)=>a.name.localeCompare(b.name));
-        const values=selected==='Tools'?tools:selected==='Resources'?await this.api.adapter.resources():(this.api.adapter.prompts||[]).map(({get,...p})=>p);
+        const values=selected==='Tools'?tools:selected==='Resources'?await this.api.adapter.resources():selected==='Resource templates'?this.api.adapter.templates:selected==='Skills'?(await this.api.adapter.skills.list()).map(skill=>({...skill,name:skill.frontmatter.name,description:skill.frontmatter.description})):(this.api.adapter.prompts||[]).map(({get,...p})=>p);
         if(this.disposed||generation!==current||selected!==type.value)return;
         definitions=values;scope.disabled=selected!=='Tools';render();
       } catch(error) {if(!this.disposed&&generation===current)this.showError(error);}
@@ -232,7 +234,7 @@ class McpPanel {
     search.addEventListener('input',render);scope.addEventListener('change',render);list.addEventListener('change',show);render();
     return el('div',{class:'mcp-page mcp-catalog-page'},el('div',{class:'mcp-filter-row'},field('Show:',type),field('Scope:',scope)),field('Filter:',search),count,
       el('div',{class:'mcp-catalog'},list,detail),el('div',{class:'mcp-actions'},button('Download exposed tool schemas',()=>download('vb6-agent-tools.json',JSON.stringify(tools,null,2),'application/json'))),
-      el('p',{class:'tool-note'},'Read-only reference. Agents call these operations over MCP; there is no tool runner in the IDE. Begin with vb6.agent.capabilities.'));
+      el('p',{class:'tool-note'},'Read-only reference. Agents call these operations over MCP; there is no tool runner in the IDE. Begin with vb6.agent.capabilities. Skills show manifests only; viewing them does not load instructions or grant permissions.'));
   }
   activityPage() {
     this.activityRows=el('tbody');this.activitySearch=input('Filter MCP activity',{placeholder:'Filter operation or error'});this.activityErrors=input('Only MCP errors',{type:'checkbox'});

@@ -4,6 +4,7 @@ import {ApplicationExportError, exportDiagnostic, exportFailure} from './diagnos
 import {prepareApplicationExport, applicationInventory} from './preflight.js';
 import {APPLICATION_SHELL_CSS, applicationDocument, documentSettings} from './document.js';
 import {APPLICATION_BOOTSTRAP} from './bootstrap.js';
+import {buildApplicationBundle, archiveApplicationBundle} from './deployment.js';
 
 /** Reusable exporter independent of generated payload imports and IDE state.
  * The default facade supplies the full, build-matched browser runtime. Custom
@@ -46,5 +47,7 @@ export function createApplicationExporter({runtimeSource, runtimeCSS, version = 
     output['manifest.json'] = JSON.stringify(manifest, null, 2) + '\n';
     return {entry: 'index.html', files: output, manifest, diagnostics: result.diagnostics};
   }
-  return Object.freeze({inspect, html, files});
+  const bundle = async (project, options = {}, document = {}, deployment = {}) => buildApplicationBundle(files(project, options, document), deployment);
+  const archive = async (project, options = {}, document = {}, deployment = {}) => archiveApplicationBundle(files(project, options, document), deployment);
+  return Object.freeze({inspect, html, files, bundle, archive});
 }

@@ -100,7 +100,9 @@ test('ambiguous late index arguments never produce a build-ready archive', () =>
 test('multi-target array errors cannot resume into a different source statement boundary', () => {
   for (const statement of ['ReDim a(1), b(1)', 'Erase a, b']) {
     const result = convertVbNetProject(procedure('Dim a As Variant, b As Variant\nOn Error Resume Next\n'+statement));
-    assert.equal(result.success, false);
-    assert.ok(result.diagnostics.some(d => d.code === 'MIG_ARRAY_ERROR_BOUNDARY'));
+    assert.ok(result.success, JSON.stringify(result.diagnostics));
+    const source=result.files['Application/Module1.vb'];
+    assert.match(source, /Private Sub __vbArrayStatement0\(ByRef __vbCell0 As Object, ByRef __vbCell1 As Object\)/);
+    assert.match(source, /On Error Resume Next\s+__vbArrayStatement0\(a, b\)/);
   }
 });

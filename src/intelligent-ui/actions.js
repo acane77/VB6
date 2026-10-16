@@ -5,7 +5,8 @@ import {safeUrl} from '../../packages/intelligent-ui/src/safety.js';
 export function createUIActionHandler(host,{review,copy,openLink,openAgent=()=>{}}){
   return async(action,context={})=>{
     const task=host.conversations.tasks.get(context.taskId||host.conversations.activeId),thread=context.thread||task?.agent.thread,epoch=context.epoch??host.adapter.workspaceEpoch;
-    const live=()=>{context.signal?.throwIfAborted();context.assertLive?.();if(!host.enabled||!task||task!==host.conversations.active||task.agent.thread!==thread||epoch!==host.adapter.workspaceEpoch)throw new Error('Task, UI setting or workspace changed; review this action again.');};live();
+    const contextRevisionAtStart=host.contextRevision||0;
+    const live=()=>{context.signal?.throwIfAborted();context.assertLive?.();if(!host.enabled||contextRevisionAtStart!==(host.contextRevision||0)||!task||task!==host.conversations.active||task.agent.thread!==thread||epoch!==host.adapter.workspaceEpoch)throw new Error('Task, UI setting or workspace changed; review this action again.');};live();
     if(action.type==='copy'){await copy(action.args[0]);return {};}
     let content=null,value=null;
     if(action.type==='messageContent')content=normalizeContentBlocks(action.args[0],{allowEmpty:false});

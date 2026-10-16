@@ -1,6 +1,6 @@
 # Coding agents: structured control of VB6 Studio
 
-The MCP server exposes **125 tools** across the implemented IDE: project/native
+The MCP server exposes **132 tools** across the implemented IDE: project/native
 source interchange, code, editor views, forms/controls/menus, resources, virtual
 files, debugger, live application interaction, Object Browser, explorer,
 documents, docking, toolbars, appearance, public Data Environment definitions and undo. The same source is bundled into
@@ -10,7 +10,10 @@ through the authenticated loopback companion. There is no outbound MCP client in
 This is structured access to the browser IDE's **implemented features**, not a
 claim of complete Microsoft VB6 binary/COM/debugger compatibility. `tools/list`
 is the authoritative schema, including enums, required fields and bounds.
-`vb6.agent.capabilities` supplies the inventory, current permissions and limits.
+`vb6.agent.capabilities` API version 2 supplies the inventory, current permissions,
+limits, eligible Tasks operations and Skills discovery. Read the six published
+workflow manifests with `skills/list`; skill instructions do not grant authority.
+See [Skills, resource ranges and result semantics](MCP.md#standard-skills-and-resource-ranges).
 `vb6.commands.list` maps the toolbar catalog plus the structured Data Environment route and reports live menu
 entries. Menu actions without a structured route are explicitly marked local-only,
 not executed through an unrestricted command dispatcher.
@@ -248,7 +251,8 @@ The local **Operations** tab lets the IDE owner cancel retained tasks, clear
 finished records and release build artifacts. Agents cannot enumerate other
 clients' operations through these controls. A cleared/released handle returns
 not-found; do not blindly repeat a mutation to recover a missing handle. Tasks
-remain limited to `agent.wait`; definitions and other mutations are not taskified.
+are limited to `agent.wait`, `project.compile` and `build.create`; definitions and
+other mutations are not taskified.
 
 ## Tool reference
 
@@ -272,7 +276,6 @@ JSON schema. Mutations require `expectedRevision` except the safe, interrupt-onl
 | `vb6.project.archive` | Read | Return a source/workspace ZIP as base64 data, never an automatic download. Native export has the same compatibility limits as the IDE. |
 | `vb6.project.explorer` | Read | Read the active project node, expanded module folders and toolbox category. |
 | `vb6.project.explorerSet` | Mutate | Control project explorer folders and toolbox categories without changing project code. |
-
 | `vb6.project.entries` | Read | Inspect supplied files/ZIP for selectable entry paths and supported encodings. |
 | `vb6.project.group` | Read | List all open native group members, active member and startup project. |
 | `vb6.project.select` | Mutate | Switch group members while preserving edited peers and per-project IDE state; revoke old authority. |
@@ -556,3 +559,39 @@ authenticated principal, not supplied `clientInfo`. Embedders must use stable,
 unique session keys. A colliding key cannot initialize, read through, or cancel
 work belonging to another principal. Callers deliberately sharing the same
 companion credential still share that authenticated principal.
+
+
+### Intelligent UI / MCP Apps
+
+These existing tools use the bounded UI engine, not arbitrary HTML/JavaScript.
+Presentation state is caller-owned and separate from project edits. `present`,
+`update` and `read` now return human-readable content and Apps metadata alongside
+their unchanged structured document result.
+
+| Tool | Behavior |
+| --- | --- |
+| `vb6.ui.catalog` | Component, syntax, captured-binding and configured-provider catalog. |
+| `vb6.ui.present` | Create a caller-owned bounded presentation; optional captured inspection bindings. |
+| `vb6.ui.update` | Update that presentation with its current `expectedUIRevision`. |
+| `vb6.ui.read` | Read one owned presentation with its fallback text and Apps resource metadata. |
+| `vb6.ui.list` | List only the caller's presentations. |
+| `vb6.ui.close` | Close one owned presentation with its current UI revision. |
+| `vb6.ui.resolveReference` | Use an explicitly configured host provider after exact local query approval; no arbitrary provider URL. |
+
+### Negotiated read-only tasks and ranged downloads
+
+A modern request declaring `io.modelcontextprotocol/tasks` may receive a handle for
+`vb6.agent.wait`, `vb6.project.compile` or `vb6.build.create`; all other calls stay
+inline. Do not assume every request returns `structuredContent`: distinguish
+`resultType: "task"` and poll `tasks/get` for its complete result. Keep the same
+transport credential/identity. Task handles expire after 120 seconds and never
+survive a workspace authority change or reload. No task input response grants
+mutation consent. Build cancellation releases an artifact when cancellation wins
+before the completed result is published.
+
+Successful builds include a `resource_link` to `artifact.manifestUri`. The manifest
+lists checksum, byte size and the byte-range template. Follow range `nextUri`
+metadata or use `vb6.build.read` and verify the reconstructed file checksum. Source
+ranges similarly provide a revision-pinned `nextUri`, using UTF-16 offsets rather
+than byte offsets. Reads use the same tool policy as explicit tool calls. Artifact
+ownership is not bypassed by knowing a URI. See [MCP.md](MCP.md) for all limits.

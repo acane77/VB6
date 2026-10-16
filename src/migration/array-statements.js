@@ -1,3 +1,4 @@
+import {outlineArrayStatement} from './statement-boundaries.js';
 import {key} from './names.js';
 import {expression} from './expressions.js';
 
@@ -6,15 +7,15 @@ const isVariant = symbol => key(symbol?.type || '') === 'variant' && !isArray(sy
 
 /** A single emitted statement retains On Error Resume Next's statement boundary. */
 export function emitArrayStatement(op, context, line) {
-  if (['redim', 'erase'].includes(op.op) && (op.decls || op.exprs).length > 1 &&
+  if (!context.outlinedArrayStatement && ['redim', 'erase'].includes(op.op) && (op.decls || op.exprs).length > 1 &&
       context.proc.code.some(instruction => ['onError', 'resume'].includes(instruction.op))) {
-    context.add('MIG_ARRAY_ERROR_BOUNDARY', 'Multi-target ReDim/Erase with resumable error handling requires a single-statement execution adapter.');
+    outlineArrayStatement(op, context, line, emitArrayStatement);
     return true;
   }
   if (op.op === 'redim') {
     for (const declaration of op.decls) {
       const node = {kind: 'id', name: declaration.name};
-      const symbol = context.find(declaration.name);
+      const symbol = context.storage(declaration.name);
       const target = expression(node, context, {assignment: true});
       if (!declaration.bounds?.length || declaration.autoNew || symbol?.paramArray || isArray(symbol) && symbol.bounds.length) {
         context.add('MIG_REDIM_TARGET', 'ReDim requires a resizable array or a scalar Variant, not fixed storage, ParamArray, or As New.');
@@ -52,7 +53,7 @@ export function emitArrayStatement(op, context, line) {
   }
   if (op.op === 'erase') {
     for (const node of op.exprs) {
-      const symbol = context.resolve(node);
+      const symbol = (node.kind==='id'?context.storage(node.name):context.resolve(node));
       const target = expression(node, context, {assignment: true});
       if (symbol?.paramArray || isVariant(symbol) && node.kind !== 'id') {
         context.add('MIG_ERASE_TARGET', 'Erase of ParamArray or a complex Variant location requires an explicit lifetime/address adapter.');

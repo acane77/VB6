@@ -209,7 +209,7 @@ See [Coding agents: setup, workflows, security and validation](docs/coding-agent
 
 ### IDE operations and permissions
 
-The agent uses the same 125 typed IDE operations as external coding agents: project/source inspection, atomic multi-module edits, form/control/menu design, compiler diagnostics, debugger/runtime control, public Data Environment definitions, virtual files/resources, and workspace management. It is a real iterative tool-use loop, not just a chat box. Streaming text, tool activity, before/after edit review, Stop, normal Undo, request/tool/token limits and downloadable in-memory transcripts are included.
+The agent uses the same 132 typed IDE operations as external coding agents (including seven local UI operations), plus its own plan and question tools: project/source inspection, atomic multi-module edits, form/control/menu design, compiler diagnostics, debugger/runtime control, public Data Environment definitions, virtual files/resources, and workspace management. It is a real iterative tool-use loop, not just a chat box. Streaming text, tool activity, before/after edit review, Stop, normal Undo, request/tool/token limits and downloadable in-memory transcripts are included.
 
 The composer offers **Ask for approval, Read only, Plan, Auto edit, Full IDE access, and Custom** profiles. Scope and exact-tool Allow/Ask/Deny rules, run-only approvals, explicit full-access acknowledgement, lease expiry and revoke controls are enforced by the IDE tool adapter. Full IDE access is not unrestricted host shell/disk/network access. See [Permission profiles](docs/CODING-AGENT-PERMISSIONS.md).
 
@@ -224,6 +224,10 @@ The default is a cumulative **4 million tokens per task**, with a **20 million**
 The classic **Tasks** tab supports eight independent named conversations, drafts and cumulative usage. **Continue** explicitly resumes a limited task or retries a transient provider request without replaying completed IDE operations. Local plan and question tools provide structured progress and clarification; neither grants permission.
 
 **New Task with Context…** lets you review/edit a public-message excerpt before creating a fresh draft, without copying signatures, tools or grants. Tasks stay memory-only and all operate on the same live project.
+
+**Pause** lets the current operation finish and retains confirmed results for explicit Continue, without replaying edits. **Stop** still cancels immediately. Search the bounded public conversation by messages, tool details or status, navigate matches with Enter/Shift+Enter, and use **New task from here…** to review a selected message prefix.
+
+The Tasks tab exports public context as JSON or Markdown and imports a reviewed excerpt into a **fresh task**. Import never restores native history, credentials, permissions, project checkpoints or a billed session; queued text is opt-in and never auto-sends. See [Task workflows, archive boundaries and provider validation](docs/CODING-AGENT-WORKFLOWS.md).
 
 ### Recovery and context compaction
 

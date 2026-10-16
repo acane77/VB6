@@ -57,6 +57,7 @@ try:
         page.on('console', browser_console)
         url = f'http://127.0.0.1:{server.server_port}'
         page.goto(url + '/artifacts/vb6-compute/playground.html')
+        page.add_script_tag(content=(ROOT / 'tests/compute-array-values-browser.js').read_text())
         page.add_script_tag(content=(ROOT / 'tests/compute-extended-browser.js').read_text())
         page.add_script_tag(content=(ROOT / 'tests/compute-images-browser.js').read_text())
         page.add_script_tag(content=(ROOT / 'tests/compute-application-browser.js').read_text())

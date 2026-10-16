@@ -8,8 +8,8 @@ It does not replace the classic editor, project format, runtime or form designer
 
 Open **Tools > Advanced Editor Options**, select **Enable advanced code editor**,
 and apply. Minimap, sticky scope headers, word wrap, ligatures, whitespace,
-semantic highlighting, parameter hints and reference CodeLens have individual
-options. Cancelling the dialog has no effect. These settings belong to the
+semantic highlighting, parameter hints, reference CodeLens and paused-frame inline
+values have individual options. Cancelling the dialog has no effect. These settings belong to the
 browser profile, not the project; unavailable storage affects only persistence.
 Only the boolean `enabled: true` enables the feature. Disabling it restores the
 classic adapter's source and selection and releases enhanced views and workers.
@@ -50,8 +50,8 @@ same outputs. The normal IDE retains its separate exact build manifest.
 | Source navigation | Completion and signature help; hover; definition, declaration, type definition and implementation navigation; inline Peek using shared read-only models; references; document outline and project-symbol search. |
 | Hierarchies | Modeless call/type tools; incoming/outgoing calls; grouped call-site previews; lazy expansion; cycles; keyboard navigation; virtualized rows; explicit stale-result refresh. |
 | Split editor | Two views of one source model with independent selections and scrolling; pointer/keyboard resizing; focus-other-split command; shared undo and debugger/read-only state. |
-| Language feedback | Push and negotiated pull diagnostics; semantic tokens; parameter-name inlay hints; reference CodeLens; quick fixes and external refactor/source actions when supplied by a server. |
-| Debugger | Breakpoint and execution gutters; bookmarks; existing run/step/watch shortcuts; storage-only paused-frame data tips; existing debugger windows and central edit-and-continue workflow. |
+| Language feedback | Push and document/workspace pull diagnostics; semantic tokens; parameter-name inlay hints; reference CodeLens; built-in typed constant extraction/inlining and external refactor/source actions when supplied by a server. |
+| Debugger | Breakpoint and execution gutters; bookmarks; existing run/step/watch shortcuts; storage-only paused-frame data tips and inline values; existing debugger windows and central edit-and-continue workflow. |
 | Designer | XAML source edits and safe workspace edits enter the existing form-designer transaction pipeline; locked/running/invalid edits are rejected without partial application. |
 
 F1 opens the editor command palette, Ctrl+T opens project-symbol search, F12 goes
@@ -65,6 +65,35 @@ need the corresponding menu action.
 Hierarchy rows use Up/Down, Home/End, Right to expand, Left to collapse/go to the
 parent, Space to toggle, and Enter to open source. The split separator is keyboard
 focusable; Up/Down adjusts it, with Home/End selecting its 20%/80% limits.
+
+## Shared source actions and classic selection search
+
+In a classic VB6 code pane, **Ctrl+.**, **Edit > Source Actions…** and the code
+context menu offer actions for the current selection. Enhanced panes expose the
+same compiler-backed actions through their language-server code-action UI; the
+Edit menu also applies them through the shared project history. One accepted
+action is one undoable project transaction. Read-only/running source, pending IME
+composition, a different project/document and stale source reject the edit.
+
+**Extract constant** accepts bounded scalar literal expressions, checks the
+compiler representation before and after replacement, and inserts a fresh local
+`Const NewConstant As <type> = ...`. It preserves numeric literal types, signed
+integer boundaries, operator precedence, line endings and surrounding comments.
+It does not hoist calls, names, declarations, unsafe token fragments or expressions
+across in-procedure conditional directives. The generated name is selected for
+renaming in the classic shared action UI. **Inline constant reference** replaces
+only the selected safely bound local/module reference, leaves the declaration and
+other references intact, groups the initializer, and refuses implicit type
+coercions or nonliteral initializers.
+
+Classic **Find/Replace > Selection** captures the selected full-source range,
+including in Procedure View and virtualized modules. Finding the next match does
+not shrink that scope. Edits map its boundaries; Replace All is one literal
+replacement transaction and does not interpret `$1` or touch outside matches.
+Whole-word search follows VB identifier boundaries, including Unicode names and
+type-declaration suffixes. Match counts are announced as status text; Enter and
+Shift+Enter navigate, and Escape closes from either text field. Enhanced mode
+retains Monaco's own find/replace UI and scope controls.
 
 ## Built-in services versus external servers
 
@@ -89,8 +118,10 @@ definitions/references, safe rename, VB6 snippets, symbols, folding, selection
 ranges, formatting, semantic tokens, diagnostics and VB6 hints/CodeLens. XAML
 includes tag-linked editing and schema-aware navigation/completion. XAML range
 formatting deliberately avoids reformatting isolated fragments whose mixed
-content or `xml:space` context cannot be preserved. The built-in source action
-removes VB6 trailing whitespace; it is not a general refactoring engine.
+content or `xml:space` context cannot be preserved. Built-in VB6 source actions
+remove trailing whitespace, add `Option Explicit`, extract a typed literal
+constant and inline a constant reference. The refactoring boundaries below are
+intentional; this is not a general data-flow refactoring engine.
 
 For an external server, enter its explicit **ws:// or wss://** endpoint separately
 for VB6 and XAML. It must exchange one JSON-RPC message per WebSocket text frame,
@@ -104,16 +135,17 @@ definitions/types/implementations, references/highlights, symbols and symbol
 resolution, code actions/resolution, CodeLens, document links, colors, formatting
 (including on-type where advertised), rename, folding/selection/linked ranges,
 semantic full/range/delta results, inlay hints/resolution, call/type hierarchies,
-push/pull diagnostics, save notifications, configuration and dynamic provider
-registration. Unsupported capabilities are not invented. External actions and
+push/document/workspace pull diagnostics, inline values, save notifications,
+configuration and dynamic provider registration. Unsupported capabilities are not invented. External actions and
 refactorings are only as complete as that configured server's implementation.
 
 **Intentional boundaries:** this is not an implementation of the Visual Studio
 extension host, Roslyn/VB.NET language semantics or every Visual Studio command.
 LSP filesystem create/rename/delete operations, arbitrary external-document
-opening, `willSaveWaitUntil`, workspace-wide pull diagnostics and LSP inline-value
-presentation are not advertised. Use the IDE's project/design tools for structural
-changes. The existing VM/debugger/native/COM compatibility boundaries remain in
+opening and `willSaveWaitUntil` are not advertised. General Extract Method,
+variable extraction with data-flow analysis, automatic getter/call evaluation and
+closed-file discovery from server-supplied URIs are not implemented. Use the IDE's
+project/design tools for structural changes. The existing VM/debugger/native/COM compatibility boundaries remain in
 [DEBUGGER-COMPATIBILITY.md](DEBUGGER-COMPATIBILITY.md) and
 [COMPATIBILITY.md](COMPATIBILITY.md); this editor does not expand those semantics.
 
@@ -140,7 +172,17 @@ only stored identifiers/field paths in the matching selected paused frame and
 source procedure. A changed pause, frame, bridge, source, pending edit or retained
 frame invalidates the response. Function calls, call-result members, implicit
 With paths and unavailable/property-getter values stay in the existing explicit
-debugger tools; automatic hover never calls `debugEvaluate`.
+debugger tools; automatic hover and inline values never call `debugEvaluate`.
+
+Inline values are decorations, not source edits. They follow the selected paused
+frame, source version and visible split pane, and clear on resume, pending edits,
+composition, opt-out and disposal. Local candidates inspect only stored names and
+field paths. External `InlineValueText` is rendered as untrusted text; variable
+lookup respects the case-sensitive flag, and the evaluatable-expression arm is
+restricted to the same storage-only paths. Calls, indexers, operators and getters
+are not evaluated. At most two physical inline inspections are in flight across
+all enhanced panes; each pane displays at most 32 candidates and three values per
+line. A slow discarded request still occupies its slot until it settles.
 
 The optional surface contains a narrowly scoped Monaco 0.57.0 linked-editing
 compatibility guard in `monaco-compat.js`. That pinned contribution's two delayed
@@ -155,9 +197,22 @@ upgrading Monaco, rather than silently accepting a changed vendor shape.
 Large source models and navigation lists keep viewport DOM bounded. Text document
 indexes apply incremental UTF-16 changes and semantic/reference work runs in the
 language worker. Requests carry cancellation and snapshot checks. External pull
-diagnostics are debounced, limited to two concurrent requests, and retry
-server-requested cancellation at most three times with backoff. Result snapshots
-are invalidated when inter-file dependencies open, change or close.
+diagnostics are debounced. Document-only providers have at most two concurrent
+pulls; workspace providers are grouped by identifier and pulled serially. Both
+retry server-requested cancellation at most three times with backoff. Workspace
+partial results are staged until a valid final response; malformed, stale or
+duplicate reports never partially replace markers. Result IDs, including empty
+strings, are preserved for full/unchanged negotiation. Only already-owned open
+documents are published. Batches are limited to 8,192 reports and 100,000
+diagnostics. The built-in worker coalesces equal-revision diagnostic requests and
+serializes compiler-cache traversal across revisions. Compiler failure does not
+produce an empty successful report.
+
+VB6 folding matches closer types rather than blindly popping a stack. Procedures,
+loop/block statements, multiline continuations, conditional blocks, comment runs
+and comment `'#Region` / `'#End Region` markers produce nested, non-crossing
+line ranges. Incomplete blocks do not consume the following procedure. A document
+has at most 10,000 presented folds, cached by source snapshot.
 
 ```sh
 npm run test:advanced-editor
@@ -171,7 +226,7 @@ VB6_BROWSER=webkit npm run test:browser:advanced-editor
 Install the Python Playwright package and the requested browser binaries before
 browser tests. HTTP is the default transport. CI builds from pinned dependencies
 and runs HTTP/file acceptance for Chromium, Firefox and WebKit in
-`.github/workflows/xaml.yml`. `VB6_TEST_TRANSPORT=memory` explicitly exercises the
+`.github/workflows/validate.yml`. `VB6_TEST_TRANSPORT=memory` explicitly exercises the
 rebuilt offline HTML via `set_content` in constrained environments; its labelled
 result is **not** HTTP or file-delivery acceptance.
 
@@ -179,7 +234,9 @@ The browser suite tests strict opt-in, selection/history, Unicode typing,
 multicaret/snippets, worker navigation, minimap/folding, breakpoint/execution
 coordinates, read-only state, XAML/designer undo, stale edits, disconnect/reconnect,
 project replacement, Peek, rename, superseded startup, symbol/hierarchy tools,
-split panes, actual paused-frame tips and pending linked-editing teardown. Its
+split panes, actual paused-frame tips/inline values, constant actions and their
+undo/stale guards, classic selection-scoped replacement, stable workspace
+diagnostic reports and pending linked-editing teardown. Its
 100,001-line fixture asserts bounded visible DOM, lexical reindexing and UTF-16
 scanning. Recorded synchronous programmatic edit-and-sync times are not keystroke
 latency, GPU frame time, FPS or a universal hardware performance guarantee.

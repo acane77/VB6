@@ -36,11 +36,12 @@ export class ExpressionParser {
   expect(v) { if(!this.match(v)) throw new VBError(`Expected '${v}' in ${this.text}`,1002,null,0,this.peek().start+1); }
   // Argument nodes preserve omitted values and source evaluation order. Named
   // arguments are rebound to declaration slots only after target resolution.
-  argument() {
+  argument(fileNumber=false,inputFunction=false) {
     if(this.peek().type==='eof'||this.peek().type==='op'&&[',',')'].includes(this.peek().value))return {kind:'missing'};
     if(this.peek().type==='id'&&this.tokens[this.i+1]?.value===':='){
-      const name=this.take().value;this.take();return {kind:'named',name,expr:this.expression()};
+      const name=this.take().value;this.take();if(inputFunction&&name.toLowerCase()==='filenumber')this.match('#');return {kind:'named',name,expr:this.expression()};
     }
+    if(fileNumber)this.match('#');
     if(this.match('byval'))return {kind:'byval',expr:this.expression()};
     return this.expression();
   }
@@ -83,8 +84,8 @@ export class ExpressionParser {
       if(this.match('.')){node={kind:'member',object:node,name:this.memberName()};continue;}
       if(this.match('!')){node={kind:'call',callee:node,args:[{kind:'literal',value:this.memberName(),valueType:'string'}]};continue;}
       if(this.match('(')) {
-        const args=[];
-        if(!this.match(')')) { do{args.push(this.argument());}while(this.match(',')); this.expect(')'); }
+        const args=[],inputFunction=node.kind==='id'&&/^inputb?\$?$/i.test(node.name);
+        if(!this.match(')')) { do{args.push(this.argument(inputFunction&&args.length===1,inputFunction));}while(this.match(',')); this.expect(')'); }
         node={kind:'call',callee:node,args}; continue;
       }
       const op=String(this.peek().value).toLowerCase(), prec=this.peek().raw[0]!=='['&&['op','id'].includes(this.peek().type)&&Object.hasOwn(PRECEDENCE,op)?PRECEDENCE[op]:undefined;

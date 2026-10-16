@@ -106,9 +106,11 @@ transfers ownership only after conversion succeeds.
 Array element l-values stay pinned through later argument evaluation and the
 callee. Resize/erase while pinned raises the existing error 10. Explicit grouping,
 as in `Call WriteThrough((count))`, instead creates an isolated value temporary.
-Fixed-length String write-through remains a diagnostic; use an explicitly grouped
-copy when no copy-back is needed. Native reference descriptor chains are bounded,
-but arbitrary memory supplied by raw Declare calls is not sandboxed.
+Fixed-length scalar Strings and inline UDT String fields use a writable owned
+String bridge instead of an immediate alias, then pad/truncate on normal-return
+copy-back. Grouped values never copy back, and failed calls discard their bridge;
+see [native call arguments](WIN32-CALLS.md). Native reference descriptor chains
+are bounded, but arbitrary memory supplied by raw Declare calls is not sandboxed.
 
 ## Typed Variant arrays and arrays inside scalar Variants
 
@@ -264,9 +266,10 @@ Do not treat local Node success as Windows acceptance.
 
 Object/IDispatch storage, general classes/interfaces, native provider/OLE hosting,
 whole typed-array borrowing as a scalar ByRef Variant, arbitrary late binding,
-fixed-length String ByRef
-copy-back and remaining advanced framework members are unfinished. This page
-records the implemented contract, not universal native VB6 parity.
+whole fixed-String arrays and remaining advanced framework members are unfinished.
+Scalar fixed-length Strings and inline UDT String fields support normal-return
+ByRef String/Variant copy-back under [the native call contract](WIN32-CALLS.md).
+This page records the implemented contract, not universal native VB6 parity.
 
 ## Primary references
 

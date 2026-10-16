@@ -63,8 +63,8 @@ test('parenthesized mismatched ByRef scalars may convert without altering the va
 test('unparenthesized mismatched ByRef variables still diagnose exact type requirements',()=>{
   assert.throws(()=>compile('Dim d As Double\nCall Narrow(d)','Private Sub Narrow(ByRef n As Integer)\nEnd Sub'),/exact declared type/);
 });
-test('unparenthesized fixed-length String copy-back is not falsely implemented',()=>{
-  assert.throws(()=>compile('Dim s As String * 8\nCall Text(s)','Private Sub Text(ByRef s As String)\nEnd Sub'),/Fixed-length String ByRef/);
+test('unparenthesized fixed-length String uses a writable project-call bridge',()=>{
+  assert.doesNotThrow(()=>compile('Dim s As String * 8\nCall Text(s)','Private Sub Text(ByRef s As String)\ns=\"changed\"\nEnd Sub'));
 });
 for(const [decl,body,pattern]of [
  ['Private Sub P(Optional ByRef x() As Long)\nEnd Sub','P',/Optional.*array/i],

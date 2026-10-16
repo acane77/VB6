@@ -1,4 +1,5 @@
 /** Staged, recoverable folder saves. Not an atomic multi-file filesystem transaction. */
+import {assertFileTree} from './file-tree.js';
 import {nativeOutputPath,writeNativeDirectory} from './native-directory.js';
 import {equalBytes} from './native-text.js';
 export const NATIVE_SAVE_JOURNAL='.vb6-save-journal';
@@ -25,7 +26,7 @@ async function load(root){
   for(let i=0;i<doc.entries.length;i++){
     const e=doc.entries[i],path=nativeOutputPath(e.path);if(path!==e.path||path.split('/')[0].toLowerCase()===NATIVE_SAVE_JOURNAL||names.has(path.toLowerCase()))throw new Error('Invalid recovery destination');names.add(path.toLowerCase());
     const before=await verified(dir,e.before,'before/'+i),after=await verified(dir,e.after,'after/'+i);if(after===null)throw new Error('Missing recovery output');total+=(before?.length||0)+after.length;if(total>2*MAX)throw new Error('Recovery exceeds size limit');entries.push({path,before,bytes:after});
-  }return {dir,doc,entries};
+  }assertFileTree(entries.map(e=>e.path));return {dir,doc,entries};
 }
 export async function inspectNativeSaveRecovery(root){const state=await load(root);if(!state)return null;const files=[];for(const e of state.entries){const current=await read(root,e.path);files.push({path:e.path,state:same(current,e.bytes)?'saved':same(current,e.before)?'original':'conflict',created:e.before===null});}return {phase:state.doc.phase,files,conflicts:files.filter(e=>e.state==='conflict').map(e=>e.path)};}
 async function recover(root,action){
@@ -50,6 +51,7 @@ export async function recoverNativeDirectory(root,{action='rollback'}={}){return
 export async function writeRecoverableNativeDirectory(plan){return lock(plan.handle,async()=>{
   const root=plan.handle;if(typeof root.removeEntry!=='function')throw new Error('Recoverable saves require directory removal support');
   if(await journal(root))throw new Error('A previous native save journal exists. Recover or inspect it before saving again.');
+  assertFileTree((plan.observed||plan.entries).map(e=>e.path));
   for(const e of plan.observed||plan.entries){nativeOutputPath(e.path);if(e.path.split('/')[0].toLowerCase()===NATIVE_SAVE_JOURNAL)throw new Error('Reserved save journal path');if(!same(await read(root,e.path),e.before))throw new Error('File changed since save confirmation: '+e.path+'; nothing was written');}
   if(!plan.entries.length)return writeNativeDirectory(plan);
   const dir=await root.getDirectoryHandle(NATIVE_SAVE_JOURNAL,{create:true}),doc={format:'VB6Studio.NativeSave',version:1,phase:'staged',entries:[]};let staged=false;

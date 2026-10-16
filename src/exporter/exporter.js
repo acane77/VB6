@@ -3,6 +3,7 @@ import {RUNTIME_SOURCE, RUNTIME_CSS} from './runtime-payload.js';
 import {createApplicationExporter} from './application-exporter.js';
 import {jsonForHTML} from './serialization.js';
 import {ApplicationExportError} from './diagnostics.js';
+import {verifyApplicationBundle} from './deployment.js';
 
 // The full runtime is included once. No feature tree-shaking can accidentally
 // remove dynamic controls, Declare adapters, source OCXs or late-bound services.
@@ -16,3 +17,9 @@ export function exportApplicationFiles(project, options = {}, document = {}) { r
 export function inspectApplicationExport(project, options = {}, document = {}) { return exporter.inspect(project, options, document); }
 export const RUNTIME_VERSION = VERSION;
 export {jsonForHTML, createApplicationExporter, ApplicationExportError};
+
+/** Async SHA-256 release packaging, with optional offline installation. */
+export function exportApplicationBundle(project, options = {}, document = {}, deployment = {}) { return exporter.bundle(project, options, document, deployment); }
+/** Deterministic STORE ZIP plus the verified deployment and its manifest. */
+export function exportApplicationArchive(project, options = {}, document = {}, deployment = {}) { return exporter.archive(project, options, document, deployment); }
+export {verifyApplicationBundle};

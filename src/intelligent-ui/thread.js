@@ -4,7 +4,7 @@ import {splitUIMessage} from '../../packages/intelligent-ui/src/message.js';
 const snapshots=new WeakMap();
 /** Optional rich-content seam; ordinary Markdown and user messages are never interpreted. */
 export class IntelligentThreadContent {
-  constructor(view,host,markdown){this.view=view;this.host=host;this.markdown=markdown;this.entries=new Map();this.off=host.onChange(()=>{for(const record of view.nodes.values())record.version=-1;view.version=-1;view.update(view.thread,view.options);});}
+  constructor(view,host,markdown){this.view=view;this.host=host;this.markdown=markdown;this.entries=new Map();this.off=host.onChange(event=>{if(event?.type==='workspace'){this.clear();snapshots.delete(this.view.thread);}for(const record of view.nodes.values())record.version=-1;view.version=-1;view.update(view.thread,view.options);});}
   state(){let state=snapshots.get(this.view.thread);if(!state){state=new Map();snapshots.set(this.view.thread,state);}return state;}
   entry(item,record){let entry=this.entries.get(item.id);if(!entry){entry={thread:this.view.thread,record,parts:new Map(),taskId:this.view.options.taskId,epoch:this.host.adapter.workspaceEpoch};this.entries.set(item.id,entry);}return entry;}
   surface(entry,id,node,ui){
@@ -31,7 +31,7 @@ export class IntelligentThreadContent {
   }
   renderTool(item,record){
     if(!this.host.enabled||!/^vb6\.ui\.(present|update|read)$/.test(item.text)||item.status!=='complete'){this.remove(item.id);return;}
-    let result;try{result=JSON.parse(item.result);}catch{return;}const ui=result?.ui;if(ui?.version!==1||typeof ui.source!=='string')return;
+    let result;try{result=JSON.parse(item.result);}catch{this.remove(item.id);return;}const ui=result?.ui;if(ui?.version!==1||typeof ui.source!=='string'){this.remove(item.id);return;}
     const entry=this.entry(item,record),id=item.id+':tool',stamp=ui.id+':'+ui.revision;let value=entry.parts.get(id);
     if(value?.stamp===stamp)return;if(value){value.surface.dispose();value.node.remove();}
     const node=record.body.ownerDocument.createElement('div');node.className='agent-intelligent-result';record.body.append(node);const surface=this.surface(entry,id,node,ui);entry.parts.set(id,{node,surface,stamp});record.node.open=true;

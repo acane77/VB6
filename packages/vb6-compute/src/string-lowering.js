@@ -1,5 +1,5 @@
 /** String intrinsics are kept separate from numeric/control-flow lowering. */
-export function createStringLowering({arena,expr,bind,out,error,module,nodeSymbol,codePage=null}) {
+export function createStringLowering({arena,expr,bind,out,error,module,arrayValue,codePage=null}) {
   const raw=(code,type)=>bind(code,type,false);
   const temporary=make=>raw(make(arena.scratch()),'string');
   const requireString=value=>{if(value.type!=='string')error('Expected String value; implicit locale-sensitive conversion is unavailable','GPU_CONVERSION');return value.code;};
@@ -30,7 +30,7 @@ export function createStringLowering({arena,expr,bind,out,error,module,nodeSymbo
     const required=name==='instr'?args.length===2?2:3:min;
     if(args.slice(0,required).some(a=>a.kind==='missing'))error('Required string argument omitted','GPU_ARGUMENT');
     if(name==='join'){
-      const s=nodeSymbol(args[0]);if(!s?.array||s.type!=='string')error('Join requires a String array','GPU_TYPE');
+      const s=arrayValue(args[0]);if(!s?.array||s.type!=='string')error('Join requires a String array','GPU_TYPE');
       const delimiter=args[1]&&args[1].kind!=='missing'?requireString(expr(args[1])):arena.literal(' ');
       return temporary(dst=>`str_join(${dst},${s.address},${delimiter})`);
     }

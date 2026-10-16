@@ -1,7 +1,7 @@
 import {themedIndicator} from '../theme/icons.js';
 import {referenceSnapshot} from './reference-metadata.js';
 import {declarationTargets} from './event-completion.js';
-import {FindIndex,replaceMatches} from './find-index.js';
+import {FindIndex,replaceMatches,mapFindScope} from './find-index.js';
 import {VirtualTextInput} from './virtual-input.js';
 import {updateSourceIndex,replacementChange,inputChange,HighlightCache} from './incremental.js';
 import {EditorIntelligence,wordAt} from './intelligence.js';
@@ -54,10 +54,10 @@ export class SourceEditor extends Signal {
     pane.procedureButton.setAttribute('aria-pressed',String(pane.mode==='procedure'));pane.moduleButton.setAttribute('aria-pressed',String(pane.mode==='module'));pane.node.dataset.viewMode=pane.mode;
   }
   assignSource(value,selection=null,hint=null){
-    const next=String(value),change=hint||textChange(this.text,next),states=this.panes.map(p=>({pane:p,start:mapOffset(change,this.selectionBounds(p).start),end:mapOffset(change,this.selectionBounds(p).end)}));const indexed=updateSourceIndex(this.index,next,change);this.metrics.indexedLines+=indexed.scannedLines;this.selectorDirty ||= indexed.changedProcedures||/\b(?:WithEvents|Implements)\b/i.test(this.text.slice(this.text.lastIndexOf('\n',Math.max(0,change.start-1))+1,this.text.indexOf('\n',change.oldEnd)<0?this.text.length:this.text.indexOf('\n',change.oldEnd))+next.slice(next.lastIndexOf('\n',Math.max(0,change.start-1))+1,next.indexOf('\n',change.newEnd)<0?next.length:next.indexOf('\n',change.newEnd)));this.text=next;this.lastValue=next;this.index=indexed.index;this.lines=this.index.lines;this.lineStarts=this.index.starts;this.procedureIndex=this.index.procedures;
+    const next=String(value),change=hint||textChange(this.text,next),states=this.panes.map(p=>({pane:p,start:mapOffset(change,this.selectionBounds(p).start),end:mapOffset(change,this.selectionBounds(p).end)}));const indexed=updateSourceIndex(this.index,next,change);this.metrics.indexedLines+=indexed.scannedLines;this.findScope=mapFindScope(this.findScope,change,next.length);this.selectorDirty ||= indexed.changedProcedures||/\b(?:WithEvents|Implements)\b/i.test(this.text.slice(this.text.lastIndexOf('\n',Math.max(0,change.start-1))+1,this.text.indexOf('\n',change.oldEnd)<0?this.text.length:this.text.indexOf('\n',change.oldEnd))+next.slice(next.lastIndexOf('\n',Math.max(0,change.start-1))+1,next.indexOf('\n',change.newEnd)<0?next.length:next.indexOf('\n',change.newEnd)));this.text=next;this.lastValue=next;this.index=indexed.index;this.lines=this.index.lines;this.lineStarts=this.index.starts;this.procedureIndex=this.index.procedures;
     for(const state of states){if(selection&&state.pane===this.activePane)Object.assign(state,selection);this.syncPane(state.pane,state.start,state.end);}
   }
-  setDocument(module,project){this.cancelCompositionAssistance();this.closeCompletion();this.closeInfo();const changed=this.module?.id!==module.id;this.module=module;this.project=project;this.root.style.setProperty('--editor-tab-width',String(project.settings.tabWidth||4));if(changed&&!this.appearance.fullModule)this.primary.mode='procedure';if(changed){this.selectedObject='(General)';this.objectEntries=null;this.objectSignature=null;}this.assignSource(module.code||'',changed?{start:0,end:0}:null);if(changed)for(const pane of this.panes){pane.input.scrollTop=pane.input.scrollLeft=0;}this.updateSelectors();this.paint();this.cursorChanged();}
+  setDocument(module,project){this.cancelCompositionAssistance();this.closeCompletion();this.closeInfo();const changed=this.module?.id!==module.id;this.module=module;this.project=project;this.root.style.setProperty('--editor-tab-width',String(project.settings.tabWidth||4));if(changed&&!this.appearance.fullModule)this.primary.mode='procedure';if(changed){this.findScope=null;this.scopeBox.checked=false;this.selectedObject='(General)';this.objectEntries=null;this.objectSignature=null;}this.assignSource(module.code||'',changed?{start:0,end:0}:null);if(changed)for(const pane of this.panes){pane.input.scrollTop=pane.input.scrollLeft=0;}this.updateSelectors();this.paint();this.cursorChanged();}
   // Keep current main's identity-preserving designer refresh; typed declarations
   // add event/interface targets without resetting source, selection or split panes.
   refreshObjects(refreshEvents=true){
@@ -307,10 +307,40 @@ export class SourceEditor extends Signal {
   }
   indentBlock(outdent=false){if(this.readOnly)return;const width=this.project.settings.tabWidth||4;this.transformBlock(line=>outdent?line.replace(new RegExp('^ {1,'+width+'}|^\\t'),''):' '.repeat(width)+line);}
   transformBlock(transform){if(this.readOnly)return;const selection=this.selectionBounds(),startLine=positionAt(this.index,selection.start).line,endLine=positionAt(this.index,Math.max(selection.start,selection.end-(selection.end>selection.start&&this.text[selection.end-1]==='\n'?1:0))).line,start=offsetAt(this.index,startLine),end=offsetAt(this.index,endLine,1e9),text=this.text.slice(start,end).split('\n').map(transform).join('\n');this.replaceGlobal(text,start,end);this.selectGlobal(start,start+text.length);}
-  buildFind(){const box=el('div',{class:'editor-find',hidden:true});this.findInput=el('input',{placeholder:'Find what','aria-label':'Find what'});this.replaceInput=el('input',{placeholder:'Replace with','aria-label':'Replace with'});this.caseBox=el('input',{type:'checkbox'});this.wholeBox=el('input',{type:'checkbox'});this.findResult=el('span',{class:'find-result'});box.append(this.findInput,el('button',{onclick:()=>this.find(-1),title:'Find previous'},themedIndicator('up','↑')),el('button',{onclick:()=>this.find(1),title:'Find next'},themedIndicator('down','↓')),this.replaceInput,el('button',{class:'replace-command',onclick:()=>this.replace(false)},'Replace'),el('button',{class:'replace-command',onclick:()=>this.replace(true)},'All'),el('label',{},this.caseBox,'Aa'),el('label',{},this.wholeBox,'Word'),this.findResult,el('button',{onclick:()=>{box.hidden=true;this.input.focus();},title:'Close find'},themedIndicator('close','×')));this.findInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();this.find(e.shiftKey?-1:1);}if(e.key==='Escape'){box.hidden=true;this.input.focus();}});return box;}
-  showFind(replace=false){this.findBar.hidden=false;this.findBar.classList.toggle('replace-visible',replace);const selected=this.input.value.slice(this.input.selectionStart,this.input.selectionEnd);if(selected&&!selected.includes('\n'))this.findInput.value=selected;this.findInput.focus();this.findInput.select();}
-  matches(){return this.findIndex.search(this.text,this.findInput.value,{matchCase:this.caseBox.checked,wholeWord:this.wholeBox.checked});}
+  buildFind(){
+    const box=el('div',{class:'editor-find',hidden:true});
+    this.findInput=el('input',{placeholder:'Find what','aria-label':'Find what'});
+    this.replaceInput=el('input',{placeholder:'Replace with','aria-label':'Replace with'});
+    this.caseBox=el('input',{type:'checkbox','aria-label':'Match case'});
+    this.wholeBox=el('input',{type:'checkbox','aria-label':'Whole word'});
+    this.scopeBox=el('input',{type:'checkbox','aria-label':'Find in selection'});
+    this.findResult=el('span',{class:'find-result',role:'status','aria-live':'polite','aria-atomic':'true'});
+    const close=()=>{box.hidden=true;this.input.focus();};
+    box.append(this.findInput,el('button',{onclick:()=>this.find(-1),title:'Find previous','aria-label':'Find previous'},themedIndicator('up','↑')),
+      el('button',{onclick:()=>this.find(1),title:'Find next','aria-label':'Find next'},themedIndicator('down','↓')),this.replaceInput,
+      el('button',{class:'replace-command',onclick:()=>this.replace(false)},'Replace'),el('button',{class:'replace-command',onclick:()=>this.replace(true)},'All'),
+      el('label',{},this.caseBox,'Aa'),el('label',{},this.wholeBox,'Word'),el('label',{},this.scopeBox,'Selection'),this.findResult,
+      el('button',{onclick:close,title:'Close find','aria-label':'Close find'},themedIndicator('close','×')));
+    this.scopeBox.addEventListener('change',()=>{
+      if(this.scopeBox.checked&&!this.findScope){const bounds=this.selectionBounds();if(bounds.start!==bounds.end)this.findScope={...bounds};}
+      if(this.scopeBox.checked&&!this.findScope){this.scopeBox.checked=false;this.findResult.textContent='Select source text first';return;}
+      this.refreshFindCount();
+    });
+    for(const control of [this.findInput,this.caseBox,this.wholeBox])control.addEventListener(control===this.findInput?'input':'change',()=>this.refreshFindCount());
+    box.addEventListener('keydown',e=>{
+      if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close();}
+      else if(e.key==='Enter'&&[this.findInput,this.replaceInput].includes(e.target)){e.preventDefault();e.stopPropagation();if(e.target===this.replaceInput&&!e.shiftKey)this.replace(false);else this.find(e.shiftKey?-1:1);}
+    });return box;
+  }
+  showFind(replace=false){
+    this.findBar.hidden=false;this.findBar.classList.toggle('replace-visible',replace);
+    const bounds=this.selectionBounds(),selected=this.text.slice(bounds.start,bounds.end);
+    if(selected&&!this.scopeBox.checked){this.findScope={...bounds};if(!/[\r\n]/.test(selected))this.findInput.value=selected;}
+    this.refreshFindCount();this.findInput.focus();this.findInput.select();
+  }
+  matches(){return this.findIndex.search(this.text,this.findInput.value,{matchCase:this.caseBox.checked,wholeWord:this.wholeBox.checked,scope:this.scopeBox.checked?this.findScope:null});}
+  refreshFindCount(){const count=this.matches().length;this.findResult.textContent=count+' match'+(count===1?'':'es');}
   find(direction=1){this.matches();const bounds=this.selectionBounds(),match=this.findIndex.next(direction>0?bounds.end:bounds.start,direction);if(!match){this.findResult.textContent='No matches';return;}const pos=positionAt(this.index,match.start);this.goToLine(pos.line,pos.column);if(match.end>this.activePane.range.end&&!this.activePane.virtualizer?.active){this.setViewMode('module');this.goToLine(pos.line,pos.column);}this.selectGlobal(match.start,match.end);this.paint();this.findResult.textContent=(match.index+1)+' of '+match.count;}
-  replace(all){if(this.input.readOnly)return;const matches=this.matches();if(all){this.setValue(replaceMatches(this.text,matches,this.replaceInput.value));this.findResult.textContent=matches.length+' replaced';}else{const bounds=this.selectionBounds(),selected=matches.find(m=>m.start===bounds.start&&m.end===bounds.end);if(selected)this.replaceGlobal(this.replaceInput.value,bounds.start,bounds.end);this.find();}}
+  replace(all){if(this.input.readOnly)return;const matches=this.matches();if(all){if(!matches.length){this.findResult.textContent='0 replaced';return;}const first=matches[0].start,last=matches.at(-1).end,replacement=replaceMatches(this.text.slice(first,last),matches.map(m=>({start:m.start-first,end:m.end-first})),this.replaceInput.value);this.replaceGlobal(replacement,first,last);this.findResult.textContent=matches.length+' replaced';}else{const bounds=this.selectionBounds(),selected=matches.find(m=>m.start===bounds.start&&m.end===bounds.end);if(selected)this.replaceGlobal(this.replaceInput.value,bounds.start,bounds.end);this.find();}}
   dispose(){this.disposed=true;this.cancelCompositionAssistance();this.assistance?.dispose();this.findIndex.clear();(this.paintWindow||this.root.ownerDocument.defaultView).cancelAnimationFrame(this.paintFrame);this.closeInfo();this.highlightCache.clear();for(const pane of this.panes){pane.observer.disconnect();pane.virtualizer?.dispose();}this.closeCompletion();this.root.remove();}
 }

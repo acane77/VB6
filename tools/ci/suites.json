@@ -1,7 +1,8 @@
 {
   "core-runtime": [
     "browser-tests.py",
-    "browser-language-parity.py"
+    "browser-language-parity.py",
+    "browser-compiler-runtime.py"
   ],
   "core-parity": [
     "browser-parity-tests.py",
@@ -17,7 +18,9 @@
     "browser-webbrowser-tests.py",
     "browser-com-ole-tests.py",
     "browser-common-automation-tests.py",
-    "browser-windows-tests.py"
+    "browser-windows-tests.py",
+    "browser-core-primitives.py",
+    "browser-graphics-tests.py"
   ],
   "integration-authoring": [
     "browser-classic-export-tests.py",
@@ -35,13 +38,15 @@
   ],
   "intelligent-ui": [
     "intelligent-ui-browser-tests.py",
-    "intelligent-ui-host-browser-tests.py"
+    "intelligent-ui-host-browser-tests.py",
+    "intelligent-ui-workbench-tests.py"
   ],
   "authoring-exports": [
     "browser-xaml-tests.py",
     "browser-macos-export-tests.py",
     "browser-macos-aot-tests.py",
-    "browser-designer-tests.py"
+    "browser-designer-tests.py",
+    "browser-exporter-offline-tests.py"
   ],
   "figma-authoring": [
     "figma-browser-tests.py",
@@ -61,5 +66,9 @@
   ],
   "code-gpu": [
     "figma-editor-browser-tests.py"
+  ],
+  "project-authoring": [
+    "native-project-browser-tests.py",
+    "project-workspace-review-browser-tests.py"
   ]
 }

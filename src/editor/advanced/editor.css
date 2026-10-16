@@ -40,3 +40,6 @@
 .advanced-navigation-row[aria-disabled=true] { opacity: .6; }
 .advanced-navigation-name { flex: 0 0 auto; max-width: 65%; overflow: hidden; text-overflow: ellipsis; }
 .advanced-navigation-detail { opacity: .8; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+
+.advanced-editor-active .monaco-editor .advanced-inline-debug-value { color: var(--vb-window-text, #000); background: var(--vb-face, #c0c0c0); opacity: .8; font-style: italic; margin-left: 8px; border-radius: 2px; }
+@media (forced-colors: active) { .advanced-editor-active .monaco-editor .advanced-inline-debug-value { color: CanvasText; background: Canvas; outline: 1px solid CanvasText; opacity: 1; } }

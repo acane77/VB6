@@ -39,7 +39,7 @@ export function installAdvancedEditor(ide) {
     const checkbox=(key,label)=>{const input=el('input',{type:'checkbox','aria-label':label});input.checked=settings[key];fields[key]=input;body.append(el('label',{style:{display:'block',marginBottom:'8px'}},input,' '+label));};
     checkbox('enabled','Enable advanced code editor (experimental)');
     body.append(el('p',{},'Classic mode is the default. The advanced editor is loaded only after enabling it.'));
-    for(const [key,label]of [['minimap','Minimap'],['stickyScroll','Sticky scope headers'],['wordWrap','Word wrap'],['ligatures','Font ligatures'],['semanticHighlighting','Semantic highlighting'],['inlayHints','Parameter name hints'],['codeLens','Reference CodeLens']])checkbox(key,label);
+    for(const [key,label]of [['minimap','Minimap'],['stickyScroll','Sticky scope headers'],['wordWrap','Word wrap'],['ligatures','Font ligatures'],['semanticHighlighting','Semantic highlighting'],['inlayHints','Parameter name hints'],['codeLens','Reference CodeLens'],['inlineValues','Paused-frame inline values (storage only)']])checkbox(key,label);
     const whitespace=el('select',{'aria-label':'Render whitespace'});for(const value of ['none','boundary','selection','trailing','all'])whitespace.append(el('option',{value},value));whitespace.value=settings.renderWhitespace;fields.renderWhitespace=whitespace;body.append(el('label',{},'Render whitespace ',whitespace));
     body.append(el('hr'),el('p',{},'Language servers: leave blank to use the bundled VB6 and XAML services locally in a worker. Configured servers receive project source. Connect only to servers you trust.'));
     for(const [key,label]of [['vb6Endpoint','VB6 language server WebSocket URL'],['xamlEndpoint','XAML language server WebSocket URL']]){

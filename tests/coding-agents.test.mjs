@@ -109,8 +109,8 @@ test('agents: model list pagination and Google generation filtering', async () =
   const ids = await listModels(async (_, {cursor, receive}) => { seen.push(cursor); receive(cursor ? {models: [{name: 'models/b', supportedGenerationMethods: ['generateContent']}, {name: 'models/embedding', supportedGenerationMethods: ['embedContent']}]} : {models: [{name: 'models/a', supportedGenerationMethods: ['generateContent']}], nextPageToken: 'next'}); }, 'google');
   assert.deepEqual(ids, ['a', 'b']); assert.deepEqual(seen, ['', 'next']);
   let pages = 0;
-  const claude = await listModels(async (_, {receive}) => { pages++; receive({data: [{id: 'claude-model'}], has_more: true, last_id: 'same'}); }, 'anthropic');
-  assert.deepEqual(claude, ['claude-model']); assert.equal(pages, 2);
+  await assert.rejects(listModels(async (_, {receive}) => { pages++; receive({data: [{id: 'claude-model'}], has_more: true, last_id: 'same'}); }, 'anthropic'), /incomplete provider model catalog/);
+  assert.equal(pages, 2);
 });
 test('agents: tool aliases reject collisions and do not mutate source schemas', () => {
   assert.throws(() => toolCatalog([{name: 'a.b'}, {name: 'a_b'}]), /duplicate/);

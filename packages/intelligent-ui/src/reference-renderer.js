@@ -6,14 +6,20 @@ export function createReferenceFactories({resolveReference=async()=>null,allowRe
   return Object.fromEntries(['image','AsyncImage','AsyncImageGroup','Entity','Cite'].map(type=>[type,({document,onAction:dispatchAction=onAction})=>{
     const node=document.createElement('div'),childHost=document.createElement('span'),view=document.createElement('div');node.className='iui-reference';node.append(view,childHost);
     let props={},stamp='',generation=0,controller=null,disposed=false;
-    const action=value=>Promise.resolve().then(()=>dispatchAction(value,{signal:controller?.signal})).catch(error=>{if(!disposed)status(error.message);});
+    const action=value=>{
+      const token=generation,signal=controller?.signal;
+      return Promise.resolve().then(()=>{
+        if(disposed||generation!==token)throw new UIError('stale_action','This reference changed before the action could run.');
+        signal?.throwIfAborted();return dispatchAction(value,{signal});
+      }).catch(error=>{if(!disposed&&generation===token)status(error.message);});
+    };
     const status=text=>{view.textContent=String(text).slice(0,2000);};
     const image=(record,token)=>{
       const figure=document.createElement('figure'),caption=document.createElement('figcaption'),button=document.createElement('button');button.type='button';button.textContent='Load external image';caption.textContent=record.title||record.alt||props.alt||'';figure.append(button,caption);view.append(figure);
       const url=safeUrl(record.src);
       const load=()=>{if(disposed||generation!==token)return;const img=document.createElement('img');img.alt=record.alt||props.alt||record.title||'';img.referrerPolicy='no-referrer';img.loading='lazy';img.style.maxWidth='100%';img.style.aspectRatio=String(props.aspectRatio||'auto').replace(':','/');img.style.objectFit=props.objectFit||'contain';img.onerror=()=>{if(generation===token)caption.textContent='Image unavailable: '+caption.textContent;};img.src=url;button.replaceWith(img);};
       if(allowResource(url)===true)load();
-      else button.onclick=async()=>{button.disabled=true;try{if(await approveResource(url)!==true)throw new UIError('resource_denied','Image loading was declined.');load();}catch(error){if(generation===token){button.disabled=false;caption.textContent=error.message;}}};
+      else button.onclick=async()=>{button.disabled=true;try{if(await approveResource(url,{signal:controller?.signal})!==true)throw new UIError('resource_denied','Image loading was declined.');load();}catch(error){if(generation===token){button.disabled=false;caption.textContent=error.message;}}};
       if(record.url){const link=document.createElement('button');link.type='button';link.textContent='Open source';link.onclick=()=>action({type:'link',args:[safeUrl(record.url)]});figure.append(link);}
     };
     const render=async()=>{

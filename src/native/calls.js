@@ -5,6 +5,7 @@ export {planNativeArguments,planNativeInStrArguments};
 import {coerce, defaultValue, scalarType} from '../runtime/values.js';
 import {nativeParameterBytes} from './numeric.js';
 import {nativeVariantReference} from './variant-references.js';
+import {nativeFixedStringReference} from './fixed-string-references.js';
 const key=value=>String(value).toLowerCase().replace(/[$%&!#@]$/, '');
 const scalarTypes=new Set(['byte','integer','long','boolean','single','double','currency','date','string','variant']);
 
@@ -53,7 +54,7 @@ export const nativeCallMethods={
     if(!forced&&variable) {
       if(variable.nativeArray&&!variable.elementOf||key(variable.type)!==key(parameter.type))
         this.fail('ByRef native argument must be a scalar of the exact declared type');
-      if(variable.fixedLength)this.fail('Fixed-length String ByRef copy-back is not yet lowered; parenthesize to pass an isolated value');
+      if(variable.fixedLength)return nativeFixedStringReference(this,variable);
       const pin=this.address(variable);return {pin};
     }
     // Both expression arguments and explicitly parenthesized variables bind to a

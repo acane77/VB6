@@ -1,3 +1,5 @@
+import {defaultValueExpression} from './default-members.js';
+import {returnDeclaration} from './array-returns.js';
 import {defaultPropertyCall} from './property-plan.js';
 import {findRecord, recordTraits} from './record-types.js';
 import {key, identifier, typeName} from './names.js';
@@ -42,6 +44,7 @@ export function createContext(state, module, proc=null) {
   context.constants=new Map(module.constantBindings||[]);
   context.find=name=>{
     const k=key(name);
+    if(proc?.returnArray&&k===key(proc.name))return returnDeclaration(proc);
     if(context.locals.has(k))return context.locals.get(k);
     const local=moduleMember(module,name);if(local)return local;
     if(module.form&&['caption','left','top','width','height','backcolor','forecolor','visible','enabled','show','hide','refresh','move','hwnd'].includes(k))return {name,formMember:true,type:k==='caption'?'String':k==='visible'||k==='enabled'?'Boolean':'Long'};
@@ -55,6 +58,10 @@ export function createContext(state, module, proc=null) {
     if(k==='me')return {name:'Me',type:module.name,module,form:!!module.form};
     return null;
   };
+  // Scalar result storage is distinct from the callable symbol. A typed-array
+  // result name also denotes storage; qualified recursive calls remain callable.
+  context.storage=name=>proc && key(name)===key(proc.name) && (proc.kind==='function'||proc.accessor==='get')
+    ? returnDeclaration(proc) : context.find(name);
   context.resolve=node=>{
     if(!node)return null;
     if(node.kind==='group')return context.resolve(node.expr);
@@ -83,11 +90,12 @@ export function createContext(state, module, proc=null) {
       const callee=context.resolve(node.callee);
       if(callee?.controlArray)return {...callee,controlArray:false};
       if(callee?.bounds!==undefined&&callee.bounds!==null)return {...callee,bounds:null,arrayElement:true};
-      if(callee?.procedure)return {type:callee.type,owner:callee.owner};
+      if(callee?.procedure)return {type:callee.type,owner:callee.owner,bounds:callee.returnArray?[]:null};
       if(callee&&['variant','object'].includes(key(callee.type)))return {type:'Variant',arrayElement:true,variantIndex:true};
     }
     return null;
   };
+  context.valueType=node=>context.type(defaultValueExpression(node,context));
   context.type=node=>{
     if(!node)return 'Variant';
     if(node.kind==='literal')return node.valueType||'Variant';
@@ -96,9 +104,9 @@ export function createContext(state, module, proc=null) {
     if(node.kind==='group'||node.kind==='unary')return context.type(node.expr);
     if(node.kind==='typeof')return 'Boolean';
     if(node.kind==='binary'){
-      if(['=','<>','<','>','<=','>=','is','like'].includes(node.op)&&![context.type(node.left),context.type(node.right)].some(t=>['variant','object'].includes(key(t))))return 'Boolean';
+      if(['=','<>','<','>','<=','>=','is','like'].includes(node.op)&&![context.valueType(node.left),context.valueType(node.right)].some(t=>['variant','object'].includes(key(t))))return 'Boolean';
       if(node.op==='&')return 'String';
-      const a=key(context.type(node.left)),b=key(context.type(node.right));
+      const a=key(context.valueType(node.left)),b=key(context.valueType(node.right));
       if(['variant','object'].includes(a)||['variant','object'].includes(b))return 'Variant';
       if(node.op==='/')return 'Double';
       if(a===b)return a;

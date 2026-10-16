@@ -1,4 +1,5 @@
 import {el} from '../core/core.js';
+import {AgentThreadSearch} from './thread-search.js';
 // Weak keys release view preferences with the in-memory task; never serialize them.
 const readingStates = new WeakMap();
 let richFactory=null;
@@ -67,19 +68,40 @@ function markdown(node, text, root, announce) {
 }
 /** Keyed updates preserve old replies, selection, expanded tool details and the reader's position. */
 export class AgentThreadView {
-  constructor({announce = () => {}} = {}) {
+  constructor({announce = () => {}, onFork = null} = {}) {
+    this.onFork = onFork; this.search = new AgentThreadSearch();
     this.announce = announce; this.nodes = new Map(); this.follow = true; this.windowSize = 150; this.version = -1; this.savedTop = 0; this.expanded = new Set();
     this.root = el('div', {class: 'agent-thread-view'});
+    this.findInput = el('input', {type: 'search', maxLength: 256, 'aria-label': 'Search conversation', placeholder: 'Search conversation', oninput: () => this.find()});
+    this.findScope = el('select', {'aria-label': 'Conversation search scope', onchange: () => this.find()},
+      ...[['all', 'All entries'], ['messages', 'Messages'], ['tools', 'Tool details'], ['status', 'Status']].map(([value, label]) => el('option', {value}, label)));
+    this.findPrevious = el('button', {type: 'button', 'aria-label': 'Previous conversation match', onclick: () => this.find(-1)}, 'Previous');
+    this.findNext = el('button', {type: 'button', 'aria-label': 'Next conversation match', onclick: () => this.find(1)}, 'Next');
+    this.findClear = el('button', {type: 'button', 'aria-label': 'Clear conversation search', onclick: () => { this.findInput.value = ''; this.find(); this.findInput.focus(); }}, 'Clear');
+    this.findCount = el('span', {class: 'agent-find-count', role: 'status', 'aria-label': 'Conversation search results'});
+    this.findBar = el('div', {class: 'agent-thread-find', role: 'search', 'aria-label': 'Find in public conversation'}, this.findInput, this.findScope, this.findPrevious, this.findNext, this.findClear, this.findCount);
+    this.root.addEventListener('keydown', event => {
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f') {
+        event.preventDefault(); event.stopPropagation(); this.findInput.focus(); this.findInput.select();
+      } else if (event.target === this.findInput && !event.isComposing && event.keyCode !== 229) {
+        if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); this.find(event.shiftKey ? -1 : 1); }
+        else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); this.findInput.value = ''; this.find(); }
+      }
+    });
     this.scroller = el('div', {class: 'agent-conversation', tabindex: 0, role: 'log', 'aria-label': 'Agent conversation', 'aria-live': 'off'});
     this.omission = el('div', {class: 'agent-thread-notice'});
     this.older = el('button', {type: 'button', onclick: () => { this.follow = false; this.visibleEnd = this.lastEnd; this.windowSize = Math.min(this.thread.maxEntries, this.windowSize + 100); this.version = -1; this.update(this.thread, this.options); }}, 'Show earlier messages');
     this.list = el('div', {class: 'agent-thread-messages'});
     this.empty = el('div', {class: 'agent-thread-empty'}, el('strong', {}, 'Start a coding conversation'), el('p', {}, 'Ask about your code, describe an edit, or investigate a debugger issue. Replies and tool progress appear here. Changes still require the permissions you choose.'));
-    this.jump = el('button', {type: 'button', class: 'agent-jump-latest', hidden: true, onclick: () => { this.follow = true; this.visibleEnd = null; this.version = -1; this.update(this.thread, this.options); }}, 'Jump to latest');
-    this.scroller.append(this.omission, this.older, this.empty, this.list); this.root.append(this.scroller, this.jump);
+    this.jump = el('button', {type: 'button', class: 'agent-jump-latest', hidden: true, onclick: () => { this.revealTop = null; this.follow = true; this.visibleEnd = null; this.version = -1; this.update(this.thread, this.options); }}, 'Jump to latest');
+    this.scroller.append(this.omission, this.older, this.empty, this.list); this.root.append(this.findBar, this.scroller, this.jump);
     this.scroller.addEventListener('scroll', () => {
       // Hidden tabs have no geometry; they must not change the reader's follow preference.
       if (!this.scroller.clientHeight) return;
+      // Revealing a match must not turn a programmatic scroll into 'follow latest'.
+      if (this.revealTop != null && Math.abs(this.scroller.scrollTop - this.revealTop) < 1) { this.savedTop = this.scroller.scrollTop; this.remember(); return; }
+      this.revealTop = null;
       const following = this.follow;
       this.savedTop = this.scroller.scrollTop;
       this.follow = this.scroller.scrollHeight - this.scroller.scrollTop - this.scroller.clientHeight <= 32;
@@ -100,7 +122,42 @@ export class AgentThreadView {
       if (record.node.open) this.expanded.add(id); else this.expanded.delete(id);
     }
     readingStates.set(this.thread, {follow: this.follow, visibleEnd: this.visibleEnd, windowSize: this.windowSize,
-      top: this.savedTop, expanded: [...this.expanded]});
+      top: this.savedTop, expanded: [...this.expanded], query: this.search.query, scope: this.search.scope, match: this.search.currentId});
+  }
+  find(direction = 0) {
+    if (!this.thread) return;
+    this.search.configure(this.findInput.value, this.findScope.value); this.search.update(this.thread);
+    if (direction) this.search.move(direction);
+    const id = this.search.currentId;
+    if (id) {
+      const index = this.thread.entries.findIndex(item => item.id === id);
+      if (index >= 0) {
+        this.follow = false; this.visibleEnd = this.thread.entries[Math.min(this.thread.entries.length - 1, index + 25)].id;
+        if (this.thread.entries[index].kind === 'tool') this.expanded.add(id);
+      }
+    }
+    this.version = -1; this.update(this.thread, this.options);
+    const node = this.nodes.get(id)?.node;
+    if (node) {
+      if (node.tagName === 'DETAILS') node.open = true;
+      if (this.scroller.clientHeight) {
+        const bounds = node.getBoundingClientRect(), outer = this.scroller.getBoundingClientRect();
+        this.scroller.scrollTop += bounds.top - outer.top - Math.max(0, (this.scroller.clientHeight - Math.min(bounds.height, this.scroller.clientHeight)) / 2);
+        this.savedTop = this.scroller.scrollTop; this.revealTop = this.savedTop;
+      }
+    }
+    this.remember();
+  }
+  updateFind() {
+    const count = this.search.ids.length;
+    write(this.findCount, this.search.query ? `${this.search.position} of ${count} matching entries` : '');
+    this.findPrevious.disabled = this.findNext.disabled = !count; this.findClear.disabled = !this.search.query;
+    for (const [id, record] of this.nodes) {
+      const active = id === this.search.currentId;
+      record.node.classList.toggle('is-search-match', active);
+      if (active) record.node.setAttribute('aria-current', 'true'); else record.node.removeAttribute('aria-current');
+      if (record.fork) record.fork.disabled = !!this.options?.busy || !!this.options?.actionsDisabled || !record.text;
+    }
   }
   create(item) {
     const node = el(item.kind === 'tool' ? 'details' : 'article', {class: 'agent-thread-entry agent-' + item.kind, 'data-entry-id': item.id});
@@ -111,6 +168,10 @@ export class AgentThreadView {
     if (['user', 'assistant', 'question'].includes(item.kind)) {
       const copy = el('button', {type: 'button', class: 'agent-message-copy', 'aria-label': 'Copy message', onclick: () => copyText(this.root, record.text, this.announce)}, 'Copy');
       heading.append(copy); record.copy = copy;
+      if (this.onFork && ['user', 'assistant'].includes(item.kind)) {
+        record.fork = el('button', {type: 'button', class: 'agent-message-fork', 'aria-label': 'New task from this message', onclick: () => { if (!this.options?.busy && !this.options?.actionsDisabled) this.onFork(item.id); }}, 'New task from here…');
+        heading.append(record.fork);
+      }
     }
     node.append(heading, body, note); this.nodes.set(item.id, record);
     if (item.kind === 'tool') {
@@ -162,11 +223,15 @@ export class AgentThreadView {
       this.taskId = options.taskId; this.nodes.clear(); this.list.replaceChildren();
       this.follow = saved?.follow ?? true; this.visibleEnd = saved?.visibleEnd ?? null;
       this.savedTop = saved?.top || 0; this.windowSize = saved?.windowSize || 150;
-      this.expanded = new Set(saved?.expanded || []); this.version = -1;
+      this.expanded = new Set(saved?.expanded || []); this.version = -1; this.revealTop = null;
+      this.search.clear(); this.search.configure(saved?.query || '', saved?.scope || 'all'); this.search.update(thread);
+      if (this.search.ids.includes(saved?.match)) this.search.currentId = saved.match;
+      this.findInput.value = this.search.query; this.findScope.value = this.search.scope;
     }
     this.thread = thread; this.options = options;
     this.scroller.setAttribute('aria-busy', String(!!options.busy));
-    if (this.version === thread.revision) return;
+    this.search.update(thread);
+    if (this.version === thread.revision) { this.updateFind(); return; }
     this.version = thread.revision;
     let end = this.follow || !this.visibleEnd ? thread.entries.length : thread.entries.findIndex(item => item.id === this.visibleEnd) + 1;
     if (end < 1) end = thread.entries.length;
@@ -198,7 +263,7 @@ export class AgentThreadView {
       else this.scroller.scrollTop = top;
       this.savedTop = this.scroller.scrollTop;
     }
-    this.remember();
+    this.updateFind(); this.remember();
   }
-  dispose() { this.rich?.dispose();this.remember(); this.resize?.disconnect(); this.nodes.clear(); }
+  dispose() { this.rich?.dispose();this.remember(); this.resize?.disconnect(); this.nodes.clear(); this.search.clear(); }
 }

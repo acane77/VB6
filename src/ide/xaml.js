@@ -7,13 +7,14 @@ import {readXamlDocument,prepareXamlEdit,synchronizeXamlProject,useDesignerXaml}
 import {escapeXml} from '../../packages/xaml-compiler/src/index.js';
 
 function snapshot(project,id) {
-  return JSON.stringify({id,startup:project.startup,modules:project.modules.map(m=>({id:m.id,name:m.name,code:m.code,...(m.id===id?{form:m.form,xaml:m.xaml}:{} )}))});
+  return JSON.stringify({id,startup:project.startup,modules:project.modules.map(m=>({id:m.id,name:m.name,code:m.code,attributes:m.attributes,...(m.id===id?{form:m.form,xaml:m.xaml}:{} )}))});
 }
 function restore(project,text) {
   const value=JSON.parse(text);
   for(const record of value.modules) {
     const module=project.modules.find(m=>m.id===record.id);if(!module)throw new Error('A module needed by XAML undo is missing.');
     module.name=record.name;module.code=record.code;
+    if(Object.hasOwn(record,'attributes'))module.attributes=record.attributes;else delete module.attributes;
     if(record.id===value.id){module.form=record.form;if(record.xaml)module.xaml=record.xaml;else delete module.xaml;}
   }
   project.startup=value.startup;return project;
@@ -35,10 +36,10 @@ export function installXaml(ide) {
     ide.history.recordValue('xaml:'+project.id+':'+id,before,after,restore,label,merge);
     ide.markDirty();ide.renderAll();controller.sync();return true;
   }
-  controller.apply=(id,text,{resolveConflict=false,typing=true}={})=>{
+  controller.apply=(id,text,{resolveConflict=false,typing=true,expectedRevision,expectedBase}={})=>{
     if(!writable(id))throw new Error('End the program and unlock the form before editing XAML.');
     const project=ide.project,revision=ide.visualRevision,module=current(id),source=readXamlDocument(module,{schema});
-    const proposal=prepareXamlEdit(project,id,text,{schema,expectedRevision:source.revision,resolveConflict});
+    const proposal=prepareXamlEdit(project,id,text,{schema,expectedRevision:expectedRevision??source.revision,expectedBase,resolveConflict});
     if(project!==ide.project||revision!==ide.visualRevision)throw new Error('The project changed while the XAML edit was compiling.');
     controller.results.set(id,{text,result:proposal.result,form:proposal.module.form,settings:JSON.stringify(project.settings)});
     const now=performance.now(),merge=typing&&controller.lastModule===id&&now-controller.lastEdit<700;
@@ -90,21 +91,23 @@ export function installXaml(ide) {
       const module=current(moduleId);if(!module?.form)throw new Error('The form was removed.');
       if(id==='download')return download(module.name+'.xaml',editor.text,'application/xaml+xml;charset=utf-8');
       if(!writable(moduleId))throw new Error('The XAML form is read-only.');
+      const actionProject=ide.project,actionRevision=ide.visualRevision,sourceRevision=readXamlDocument(module,{schema}).revision,sourceVersion=editor.version;
+      const recheck=()=>{if(actionProject!==ide.project||actionRevision!==ide.visualRevision||sourceVersion!==editor.version||readXamlDocument(current(moduleId),{schema}).revision!==sourceRevision||!writable(moduleId))throw new Error('The form or XAML source changed while this action was pending.');};
       if(id==='designer') {
-        if(await modal('Use Designer XAML',{content:el('p',{},'Replace this draft with the current designer form? The current source will remain available as Previous Source.'),buttons:[{label:'Use Designer',value:true,primary:true},{label:'Cancel',value:false}]}))commit(useDesignerXaml(ide.project,moduleId,{schema}),moduleId,'Use Designer XAML');
+        if(await modal('Use Designer XAML',{content:el('p',{},'Replace this draft with the current designer form? The current source will remain available as Previous Source.'),buttons:[{label:'Use Designer',value:true,primary:true},{label:'Cancel',value:false}]})){recheck();commit(useDesignerXaml(ide.project,moduleId,{schema}),moduleId,'Use Designer XAML');}
       } else if(id==='apply') {
         const state=readXamlDocument(module,{schema});
-        if(!state.conflict||await modal('Apply XAML Draft',{content:el('p',{},'This draft predates designer edits. Apply it to replace the current form? Undo restores both source and designer.'),buttons:[{label:'Apply Draft',value:true,primary:true},{label:'Cancel',value:false}]}))controller.apply(moduleId,editor.text,{resolveConflict:true,typing:false});
+        if(!state.conflict||await modal('Apply XAML Draft',{content:el('p',{},'This draft predates designer edits. Apply it to replace the current form? Undo restores both source and designer.'),buttons:[{label:'Apply Draft',value:true,primary:true},{label:'Cancel',value:false}]})){recheck();controller.apply(moduleId,editor.text,{resolveConflict:true,typing:false,expectedRevision:sourceRevision});}
       } else if(id==='restore') {
         const backup=module.xaml?.previousText;if(typeof backup!=='string')throw new Error('There is no previous-source backup.');
         controller.apply(moduleId,backup,{typing:false});
       } else if(id==='import') {
         const input=el('input',{type:'file',accept:'.xaml,.xml,text/xml,application/xml'}),project=ide.project;
-        input.addEventListener('change',async()=>{try{const file=input.files?.[0];if(!file)return;if(file.size>8_000_000)throw new RangeError('XAML file is too large.');const text=await file.text();if(ide.project!==project)throw new Error('The project changed while reading the XAML file.');controller.apply(moduleId,text,{typing:false});}catch(error){controller.report(error);}});input.click();
+        input.addEventListener('change',async()=>{try{const file=input.files?.[0];if(!file)return;if(file.size>8_000_000)throw new RangeError('XAML file is too large.');const text=await file.text();if(ide.project!==project)throw new Error('The project changed while reading the XAML file.');recheck();controller.apply(moduleId,text,{typing:false,expectedRevision:sourceRevision});}catch(error){controller.report(error);}});input.click();
       } else if(id==='rename') {
         const offset=editor.input.selectionStart,version=editor.version,project=ide.project;
         const name=await promptDialog('Rename XAML symbol','New name:','');if(name===null)return;
-        if(project!==ide.project||version!==editor.version)throw new Error('The source changed while the rename dialog was open.');
+        if(project!==ide.project||version!==editor.version)throw new Error('The source changed while the rename dialog was open.');recheck();
         // Native Name represents a VB6 control array, not an ordinary XAML
         // namescope entry. Rename all matching native nodes atomically.
         const syntax=editor.service.analyze(editor.uri).syntax,element=syntax.elements.findLast(e=>e.start<=offset&&offset<=e.end),attr=element?.attributes.find(a=>a.name==='Name'&&a.start<=offset&&offset<=a.end);

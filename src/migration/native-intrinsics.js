@@ -9,9 +9,9 @@ export function nativeIntrinsic(node,context,emit,usage={}) {
   // An approved semantic rule is independent of the chosen output style.
   if(name==='ccur'&&context.decimalCurrency)return 'CDec('+node.args.map(value=>emit(value)).join(', ')+')';
   if(context.options.codeStyle!=='native')return null;
-  const arg=node.args[0],symbol=context.resolve(arg),declared=key(context.type(arg));
+  const arg=node.args[0],symbol=context.resolve(arg),declared=key(['isobject','ismissing','isarray','iserror','isempty','isnull','typename','vartype','callbyname'].includes(name)?context.type(arg):context.valueType(arg));
   const type=declared==='currency'&&context.decimalCurrency?'decimal':declared;
-  const scalar=symbol?.bounds==null&&!['object','variant'].includes(type)&&!context.record(type);
+  const scalar=!symbol?.returnArray&&symbol?.bounds==null&&!['object','variant'].includes(type)&&!context.record(type);
   const nativeArray=context.arrayPlan(symbol)||symbol?.paramArray;
   if(nativeArray?.lower&&['lbound','ubound'].includes(name)){
     const dimension=node.args[1];

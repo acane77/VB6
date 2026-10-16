@@ -48,3 +48,13 @@
 .agent-diff-gap{padding:3px;color:var(--vb-text);background:var(--vb-face)}
 .agent-changes>.agent-field>textarea{min-height:50px;max-height:150px}
 .agent-changes>[hidden]{display:none}
+
+/* Public-thread navigation stays compact and uses the existing IDE theme tokens. */
+.agent-thread-find{display:flex;flex-wrap:wrap;align-items:center;gap:4px;flex:none;padding:3px 0}
+.agent-thread-find input{flex:1;min-width:110px;width:160px}
+.agent-thread-find select{max-width:125px}
+.agent-thread-find button{min-width:0}
+.agent-find-count{font-size:11px;min-width:100px;overflow-wrap:anywhere}
+.agent-thread-entry.is-search-match{outline:2px solid var(--vb-selection);outline-offset:-2px}
+.agent-message-fork{font:inherit;font-size:11px;white-space:nowrap}
+.agent-thread-find:focus-within{position:relative;z-index:1}

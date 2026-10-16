@@ -1,10 +1,13 @@
+import {vb6FoldingRanges} from '../folding.js';
+import {sourceCodeActions,SOURCE_ACTION_KINDS} from '../source-actions.js';
+import {DiagnosticEngine} from './diagnostic-engine.js';
 import {SourceHierarchy} from './hierarchy.js';
 import {JsonRpcPeer,RpcError,RPC_CANCELLED,RPC_CONTENT_MODIFIED} from './rpc.js';
 import {LspTextDocument} from './text-document.js';
 import {EditorIntelligence,wordAt} from '../intelligence.js';
 import {KEYWORDS,formatCode} from '../language-service.js';
 import {tokenize} from '../../language/lexer.js';
-import {ProjectDiagnosticCache,diagnosticSnapshot} from '../../language/diagnostics.js';
+import {ProjectDiagnosticCache} from '../../language/diagnostics.js';
 import {XamlLanguageService} from '../../../packages/xaml-compiler/src/index.js';
 import {createVb6XamlSchema} from '../../xaml/forms.js';
 
@@ -31,11 +34,6 @@ function tokenAt(document,position) {
   const offset=document.offsetAt(position),base=document.lineStarts[position.line]??document.text.length;
   return safeTokenize(document.text.slice(base,document.lineEnds[position.line])).find(t=>t.type==='id'&&base+t.start<=offset&&offset<=base+t.end);
 }
-function lspDiagnostic(d,document) {
-  const severity=({error:1,warning:2,information:3,hint:4})[d.severity]||1;
-  const start=d.range?.start||{line:Math.max(0,(d.line||1)-1),character:Math.max(0,(d.column||1)-1)};
-  const at=document.offsetAt(start);return {range:d.range||document.range(at,Math.min(at+1,document.text.length)),severity,code:d.code||d.number,source:'VB6',message:d.message};
-}
 
 /** In-process/worker/stdio LSP server over the existing compiler services.
  * Documents are immutable snapshots. No runtime code or COM object is executed. */
@@ -44,7 +42,7 @@ export class BuiltinLanguageServer {
     this.peer=new JsonRpcPeer(transport,{onError:error=>this.log(error.message)});
     this.documents=new Map();this.moduleUris=new Map();this.uriModules=new Map();this.intelligence=new EditorIntelligence();
     this.xaml=new XamlLanguageService({schema:createVb6XamlSchema()});this.diagnosticCache=new ProjectDiagnosticCache();
-    this.project={id:'workspace',name:'Workspace',settings:{},modules:[]};this.revision=0;this.initialized=false;this.stopped=false;this.diagnosticDelay=diagnosticDelay;this.tokenCache=new Map();this.occurrenceCache=new Map();this.referenceCache=new Map();this.diagnostics=new Map();
+    this.project={id:'workspace',name:'Workspace',settings:{},modules:[]};this.revision=0;this.initialized=false;this.stopped=false;this.diagnosticDelay=diagnosticDelay;this.tokenCache=new Map();this.occurrenceCache=new Map();this.referenceCache=new Map();this.diagnostics=new Map();this.diagnosticEngine=new DiagnosticEngine(this);
     this.peer.onRequest('initialize',()=>{if(this.initializeRequested)throw new RpcError(-32600,'Already initialized.');this.initializeRequested=true;return ({serverInfo:{name:'VB6 Studio built-in language server',version:'1'},capabilities:{
       positionEncoding:'utf-16',textDocumentSync:{openClose:true,change:2,save:{includeText:false}},
       completionProvider:{triggerCharacters:['.',' ','<',':','{','"'],resolveProvider:false},hoverProvider:true,signatureHelpProvider:{triggerCharacters:['(',','],retriggerCharacters:[',',')']},
@@ -53,9 +51,9 @@ export class BuiltinLanguageServer {
       renameProvider:{prepareProvider:true},documentFormattingProvider:true,documentRangeFormattingProvider:true,
       foldingRangeProvider:true,selectionRangeProvider:true,linkedEditingRangeProvider:true,
       semanticTokensProvider:{legend:BUILTIN_TOKEN_LEGEND,range:true,full:{delta:true}},
-      codeActionProvider:{codeActionKinds:['source.fixAll']},
+      codeActionProvider:{codeActionKinds:[...SOURCE_ACTION_KINDS]},
       inlayHintProvider:{resolveProvider:false},codeLensProvider:{resolveProvider:true},
-      diagnosticProvider:{identifier:'vb6-studio',interFileDependencies:true,workspaceDiagnostics:false},
+      diagnosticProvider:{identifier:'vb6-studio',interFileDependencies:true,workspaceDiagnostics:true},
     }});});
     this.peer.onNotification('initialized',()=>{this.initialized=true;});
     this.peer.onRequest('shutdown',()=>{this.stopped=true;clearTimeout(this.diagnosticTimer);return null;});
@@ -84,7 +82,8 @@ export class BuiltinLanguageServer {
       'textDocument/inlayHint':p=>this.inlayHints(p),
       'textDocument/codeLens':p=>this.codeLenses(p),
       'codeLens/resolve':(p,c)=>this.resolveCodeLens(p,c),
-      'textDocument/diagnostic':async(p)=>{await this.computeDiagnostics();return {kind:'full',items:this.diagnostics.get(p.textDocument.uri)||[]};},
+      'textDocument/diagnostic':p=>this.diagnosticEngine.document(p),
+      'workspace/diagnostic':p=>this.diagnosticEngine.workspace(p),
     };
     for(const [method,handler]of Object.entries(handlers))this.peer.onRequest(method,async(p,context)=>{
       if(!this.initialized)throw new RpcError(-32002,'Server not initialized.');if(this.stopped)throw new RpcError(-32600,'Server has shut down.');
@@ -121,7 +120,7 @@ export class BuiltinLanguageServer {
     }
     this.revision++;this.tokenCache.delete(document.uri);this.occurrenceCache.delete(document.uri);this.referenceCache.clear();this.scheduleDiagnostics();
   }
-  close(uri) {this.documents.delete(uri);this.xaml.closeDocument(uri);this.tokenCache.delete(uri);this.occurrenceCache.delete(uri);this.referenceCache.clear();this.diagnostics.delete(uri);this.revision++;if(!this.peer.closed)this.peer.notify('textDocument/publishDiagnostics',{uri,diagnostics:[]});}
+  close(uri) {this.documents.delete(uri);this.xaml.closeDocument(uri);this.tokenCache.delete(uri);this.occurrenceCache.delete(uri);this.referenceCache.clear();this.diagnostics.delete(uri);this.diagnosticEngine.forget(uri);this.revision++;if(!this.peer.closed)this.peer.notify('textDocument/publishDiagnostics',{uri,diagnostics:[]});}
   target(p) {
     const document=this.document(p.textDocument.uri),module=this.module(document),offset=document.offsetAt(p.position);
     return {document,module,offset,symbol:document.languageId==='vb6'&&module?this.intelligence.definition(this.project,module,p.position.line+1,document.text,offset):null};
@@ -296,15 +295,11 @@ export class BuiltinLanguageServer {
   }
   folding(p) {
     const document=this.document(p.textDocument.uri);if(document.languageId==='xaml')return this.xaml.foldingRanges(document.uri);
-    const stack=[],ranges=[];
-    for(let line=0;line<document.lineStarts.length;line++) {
-      const tokens=safeTokenize(document.text.slice(document.lineStarts[line],document.lineEnds[line])),text=tokens.filter(t=>t.type!=='eof').map(t=>t.type==='string'?'""':t.raw).join(' ');
-      const close=/^(?:End (Sub|Function|Property|If|Select|With|Type|Enum)|Next\b|Loop\b|Wend\b)/i.test(text);
-      if(close&&stack.length){const startLine=stack.pop();if(line>startLine)ranges.push({startLine,endLine:line,kind:'region'});}
-      if(/^(?:(?:Public|Private|Friend|Static)\s+)*(?:Sub|Function|Property (?:Get|Let|Set)|Type|Enum)\b/i.test(text)||/^(?:For\b|Do\b|While\b|With\b|Select Case\b)/i.test(text)||/^If\b.*\bThen\s*$/i.test(text))stack.push(line);
-    }
-    return ranges;
+    this.foldingCache??=new WeakMap();let cached=this.foldingCache.get(document);
+    if(!cached||cached.version!==document.version){cached={version:document.version,ranges:vb6FoldingRanges(document.text)};this.foldingCache.set(document,cached);}
+    return cached.ranges;
   }
+
   selectionRanges(p) {
     const document=this.document(p.textDocument.uri),folds=this.folding(p),whole=document.range(0,document.text.length);
     return p.positions.map(position=>{
@@ -354,27 +349,15 @@ export class BuiltinLanguageServer {
     return {resultId:cacheKey,data};
   }
   codeActions(p) {
-    const document=this.document(p.textDocument.uri),only=p.context?.only;
-    if(only&&!only.some(k=>'source.fixAll'.startsWith(k)))return [];
-    const edits=[];
-    for(let line=0;line<document.lineStarts.length;line++){
-      const start=document.lineStarts[line],end=document.lineEnds[line],raw=document.text.slice(start,end),spaces=raw.match(/[ \t]+$/)?.[0];
-      if(spaces)edits.push({range:document.range(end-spaces.length,end),newText:''});
-    }
-    // XAML mixed content can contain meaningful trailing whitespace.
-    return document.languageId==='vb6'&&edits.length?[{title:'Remove trailing whitespace',kind:'source.fixAll',edit:{documentChanges:[{textDocument:{uri:document.uri,version:document.version},edits}]}}]:[];
+    const document=this.document(p.textDocument.uri);if(document.languageId!=='vb6')return [];
+    const module=this.module(document),index=this.intelligence.index(module,this.project);
+    const start=p.range?document.offsetAt(p.range.start,true):0,end=p.range?document.offsetAt(p.range.end,true):start;
+    return sourceCodeActions(module,index,start,end,{only:p.context?.only,tabWidth:this.project.settings.tabWidth||4}).map(action=>({
+      title:action.title,kind:action.kind,edit:{documentChanges:[{textDocument:{uri:document.uri,version:document.version},
+        edits:action.edits.map(e=>({range:document.range(e.start,e.end),newText:e.text}))}]}
+    }));
   }
-  scheduleDiagnostics() {clearTimeout(this.diagnosticTimer);if(!this.stopped)this.diagnosticTimer=setTimeout(()=>this.computeDiagnostics().catch(error=>this.log(error.message)),this.diagnosticDelay);}
-  async computeDiagnostics() {
-    const revision=this.revision,project=this.project,documents=new Map(this.documents),results=new Map([...documents].map(([uri])=>[uri,[]]));
-    try {
-      const steps=this.diagnosticCache.steps(diagnosticSnapshot(project));let step;
-      do {step=steps.next();if(!step.done){await yieldTask();if(revision!==this.revision||this.stopped)return;}}while(!step.done);
-      for(const d of step.value.diagnostics){const module=project.modules.find(m=>key(m.name)===key(d.source)),uri=module&&this.moduleUris.get(module.id),document=documents.get(uri);if(document)results.get(uri).push(lspDiagnostic(d,document));}
-      for(const [uri,document]of documents)if(document.languageId==='xaml')results.set(uri,this.xaml.diagnostics(uri).map(d=>({...lspDiagnostic(d,document),source:'XAML'})));
-    }catch(error){this.log('Automatic diagnostics: '+error.message);return;}
-    if(revision!==this.revision||this.stopped||this.peer.closed)return;
-    this.diagnostics=results;for(const [uri,diagnostics]of results)this.peer.notify('textDocument/publishDiagnostics',{uri,version:documents.get(uri).version,diagnostics});
-  }
-  dispose() {this.stopped=true;clearTimeout(this.diagnosticTimer);this.peer.close();this.documents.clear();this.xaml.documents.clear();this.tokenCache.clear();this.occurrenceCache.clear();this.referenceCache.clear();this.diagnosticCache.clear();}
+  scheduleDiagnostics() {clearTimeout(this.diagnosticTimer);if(!this.stopped)this.diagnosticTimer=setTimeout(()=>this.computeDiagnostics().catch(error=>{if(error.code!==RPC_CONTENT_MODIFIED&&!this.stopped)this.log(error.message);}),this.diagnosticDelay);}
+  computeDiagnostics() {return this.diagnosticEngine.compute();}
+  dispose() {this.stopped=true;clearTimeout(this.diagnosticTimer);this.peer.close();this.documents.clear();this.xaml.documents.clear();this.tokenCache.clear();this.occurrenceCache.clear();this.referenceCache.clear();this.diagnosticCache.clear();this.diagnosticEngine.dispose();}
 }

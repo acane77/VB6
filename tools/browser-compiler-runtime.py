@@ -182,7 +182,33 @@ def scalar_sdk_debug(p):
     }''')
     q.close();check(result=={'raw':5,'before':'byte','after':8,'type':'byte','rawType':'number','ide':'undefined'},result);return result
 
+def portable_intrinsics(p):
+    value=exported(p,program('Dim n As Single\nn=Rnd(-1)\nRandomize 42\nResult=CStr(CLng(Rnd()*16777216)) & "|" & FormatNumber(1234.5, , , , vbFalse) & "|" & FormatCurrency(-.5,2,vbFalse,vbTrue) & "|" & Asc(Chr(128)) & "|" & ChrW(65.5)'))
+    check(value=='15230513|1234.50|($.50)|128|B',value);return {'result':value}
+
+def portable_settings(p):
+    value=exported(p,program('Dim entries\nSaveSetting "App","Window","Top",12\nSaveSetting "app","window","top",34\nentries=GetAllSettings("APP","WINDOW")\nResult=TypeName(entries) & "|" & LBound(entries,1) & "|" & entries(0,0) & "|" & entries(0,1)\nDeleteSetting "aPP","Window"\nResult=Result & "|" & IsEmpty(GetAllSettings("App","Window"))'))
+    check(value=='String()|0|Top|34|True',value);return {'result':value}
+
+def portable_files(p):
+    value=exported(p,program('Dim fs As Object, stream As Object\nMkDir "/data"\nSet fs=CreateObject("Scripting.FileSystemObject")\nSet stream=fs.CreateTextFile(FileName:="/data/log.txt")\nstream.WriteLine Text:="hello"\nstream.WriteBlankLines Lines:=1\nstream.Close\nSetAttr "/data/log.txt",vbHidden\nResult=Dir("/data/*",vbHidden) & "|" & GetAttr("/data/log.txt") & "|" & FileLen("/data/log.txt")\nSet stream=fs.OpenTextFile(FileName:="/data/log.txt")\nResult=Result & "|" & stream.Read(Characters:=2) & "|" & stream.Column\nstream.Close\nFileCopy "/data/log.txt","/data/copy.txt"\nResult=Result & "|" & fs.GetFolder("/data").Files.Count'))
+    check(value=='log.txt|2|9|he|3|2',value);return {'result':value}
+
+def portable_stream_lifetime(p):
+    value=exported(p,program('Dim fs As Object, oldStream As Object, newStream As Object\nSet fs=CreateObject("Scripting.FileSystemObject")\nSet oldStream=fs.CreateTextFile("/old")\noldStream.Write "old"\nReset\nSet newStream=fs.CreateTextFile("/new")\nnewStream.Write "kept"\nOn Error Resume Next\noldStream.Write "corruption"\nResult=CStr(Err.Number)\noldStream.Close\nResult=Result & "|" & Err.Number\nErr.Clear\nnewStream.WriteLine " alive"\nnewStream.Close\nSet newStream=fs.OpenTextFile("/new")\nResult=Result & "|" & newStream.ReadLine\nnewStream.Close'))
+    check(value=='52|52|kept alive',value);return {'result':value}
+
+def portable_file_patterns(p):
+    value=exported(p,program('Dim fs As Object, stream As Object, ignored As String\nSet fs=CreateObject("Scripting.FileSystemObject")\nSet stream=fs.CreateTextFile("/[a].txt")\nstream.Close\nSet stream=fs.CreateTextFile("/a.txt")\nstream.Close\nResult=Dir("/[a].txt") & "|" & Dir()\nOn Error Resume Next\nignored=Dir("/" & String$(4097,"x"))\nResult=Result & "|" & Err.Number\nErr.Clear\nResult=Result & "|" & Dir("/A.?xt")'))
+    check(value=='[a].txt||7|a.txt',value);return {'result':value}
+
+def portable_file_flags(p):
+    value=exported(p,program('Dim fs As Object, stream As Object\nSet fs=CreateObject("Scripting.FileSystemObject")\nSet stream=fs.CreateTextFile("/keep")\nstream.Write "preserve"\nstream.Close\nOn Error Resume Next\nSet stream=fs.OpenTextFile("/keep",2,Null)\nResult=CStr(Err.Number)\nfs.DeleteFile "/keep", Null\nResult=Result & "|" & Err.Number\nErr.Clear\nSet stream=fs.OpenTextFile("/keep")\nResult=Result & "|" & stream.ReadAll\nstream.Close'))
+    check(value=='94|94|preserve',value);return {'result':value}
+
 TESTS=[('Exported Decimal magnitude and exact arithmetic',decimal),('Exported financial functions, named calls and whole arrays',financial),('Exported constant/enum binding and computed branches',constants),('Exported numbered errors and Resume state',errors),('Exported corrected string intrinsics',strings),('Exported Decimal binary file round trip',binary),('Real worker invalidates cross-module constant dependencies',worker),('IDE blocks invalid constants without executing source',reject),('F5 runs new compiler runtime inside isolated preview',preview),('Independent SDK runs without IDE globals',sdk)]
+TESTS.extend([('Exported random, format and character compatibility',portable_intrinsics),('Exported settings enumeration and lifecycle',portable_settings),('Exported file metadata and TextStream named arguments',portable_files)])
+TESTS.extend([('Exported TextStream rejects recycled file slots',portable_stream_lifetime),('Exported Dir literal patterns and work limits',portable_file_patterns),('Exported file flags reject Null before mutation',portable_file_flags)])
 TESTS.extend([('Exported numeric tags, promotion and Boolean formatting',scalar_values),('Exported tagged binary arrays and sequential fields',scalar_files),('Exported ByRef Call and typed For loop state',scalar_byref),('Exported typed ADO field reads',scalar_data),('Worker rebinds changed constant subtypes',scalar_worker),('Standalone SDK debugger keeps internal tags and raw API',scalar_sdk_debug),('Exported control properties use declared subtypes',scalar_controls)])
 try:
     if OPTIONS.http:

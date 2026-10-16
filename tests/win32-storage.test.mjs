@@ -37,7 +37,7 @@ for(const [name,code]of [
 }
 for(const code of [
   'Private Sub SetValue(ByRef n As Long)\nEnd Sub\nPublic Sub Main()\nDim a(2) As Long\nSetValue a\nEnd Sub',
-  'Private Sub SetValue(ByRef n As String)\nEnd Sub\nPublic Sub Main()\nDim a As String * 5\nSetValue a\nEnd Sub',
+  'Private Sub SetValue(ByRef n As String)\nEnd Sub\nPublic Sub Main()\nDim a(2) As String * 5\nSetValue a\nEnd Sub',
   'Public Sub Main()\nErr.LastDllError=5\nEnd Sub'
 ])test('unsupported native ABI/error extensions fail closed: '+code.split('\n')[0],()=>assert.throws(()=>build(code)));
 test('native String ownership uses Automation allocation and release, not fixed scratch buffers',()=>{

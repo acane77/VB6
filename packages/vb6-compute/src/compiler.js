@@ -1,3 +1,4 @@
+import {arrayValuesWGSL} from './array-values-wgsl.js';
 import {codePageWGSL} from './code-pages.js';
 import {stringPatternWGSL} from './string-pattern-wgsl.js';
 import {stringArraysWGSL} from './string-arrays-wgsl.js';
@@ -36,7 +37,6 @@ const relation = (a,op,b,type) => isWide(type)?`${type==='currency'?'cy_cmp':'d_
 export function compileComputeIR(program, options={}) {
   if(!program?.valid || !(program.modules instanceof Map))
     throw new ComputeError('The source program contains compiler errors',({VB_REDIM_FIXED:'GPU_FIXED_ARRAY',VB_REDIM_TYPE:'GPU_TYPE'})[program?.diagnostics?.[0]?.code]||'GPU_SOURCE',{diagnostics:program?.diagnostics||[]});
-  for(const module of program.modules.values())for(const proc of module.procedures.values())if(proc.returnArray)throw new ComputeError('Typed array procedure returns are not implemented by the compute target','GPU_TYPE',{source:module.name,line:proc.line});
   const precision=options.precision??'strict';
   if(!['strict','single'].includes(precision))throw new ComputeError('precision must be strict or single','GPU_OPTION');
   const workgroupSize=integer(options.workgroupSize??64,'workgroupSize',1,256);
@@ -50,7 +50,7 @@ export function compileComputeIR(program, options={}) {
   if(options.calendar&&options.calendar!=='gregorian')throw new ComputeError('Only Gregorian calendar is implemented','GPU_CALENDAR');
   const gosubStackDepth=integer(options.gosubStackDepth??64,'gosubStackDepth',1,1024);
   const warnings=[], globals=new Map(), procedures=new Map(), compiled=new Map(), active=new Set();
-  const initial=[], exports=[], sources=[],doubleArrays=[]; let current=null,requiresShared=false,hasDouble=false,hasCurrency=false,hasDate=false,hasPatterns=false,hasStringArrays=false;
+  const initial=[], exports=[], sources=[],doubleArrays=[]; let current=null,requiresShared=false,hasDouble=false,hasCurrency=false,hasDate=false,hasPatterns=false,hasStringArrays=false,hasArrayValues=false;
   const error=(message,code='GPU_UNSUPPORTED',line=current?.line||1)=>{
     throw new ComputeError(message,code,{source:current?.module?.name,line,procedure:current?.proc?.name});
   };
@@ -153,9 +153,10 @@ export function compileComputeIR(program, options={}) {
     if(proc.params.some(p=>p.paramArray))error('ParamArray requires tagged Variant storage','GPU_TYPE');
     const locals=new Map(),reset=[],params=[],lines=[],loops=new Map(),temps=new Map();let serial=0;
     const resultType=proc.kind==='sub'?'void':typeOf(proc.storageReturnType||proc.returnType);
+    const frameResultType=proc.returnArray?'long':resultType;
     if(info.depth>=maxCallDepth){
       const signature=proc.params.map((p,i)=>`arg${i}:${p.byRef?'u32':wgtype(typeOf(p.storageType||p.type))}`);
-      compiled.set(id,emitCallFrame({id,params:signature,resultType,limit:true}));
+      compiled.set(id,emitCallFrame({id,params:signature,resultType:frameResultType,limit:true}));
       active.delete(id);sources.push({id,module:module.name,procedure:proc.name,line:proc.line,depth:info.depth});return;
     }
     for(let i=0;i<proc.params.length;i++){
@@ -163,7 +164,7 @@ export function compileComputeIR(program, options={}) {
       if(p.byRef) {locals.set(key(p.name),{name:p.name,type,array,address:`arg${i}`,parameter:true});params.push(`arg${i}:u32`);}
       else {if(array)error('Array arguments must be ByRef');const s=allocate({...p,initial:null,bounds:null},module,proc);locals.set(key(p.name),s);params.push(`arg${i}:${wgtype(type)}`);reset.push(`${store(type)}(${s.address},arg${i});`);}
     }
-    if(resultType!=='void') {const s=allocate({name:proc.name,type:resultType,bounds:null},module,proc);locals.set(key(proc.name),s);reset.push(s.type==='string'?`str_reset(${s.address});`:isWide(s.type)?`put_d(${s.address},vec2<u32>(0u));`:`mem[${s.address}]=0u;`);}
+    if(resultType!=='void') {const s=allocate({name:proc.name,type:resultType,bounds:proc.returnArray?[]:null},module,proc);locals.set(key(proc.name),s);reset.push(s.array?`array_erase(${s.address});`:s.type==='string'?`str_reset(${s.address});`:isWide(s.type)?`put_d(${s.address},vec2<u32>(0u));`:`mem[${s.address}]=0u;`);}
     for(const ins of proc.code)if(ins.op==='dim')for(const d of ins.decls)if(!d.constant){
       const staticKey=info.rootId+':'+key(d.name),isStatic=proc.static||ins.static;
       let s=isStatic?staticLocals.get(staticKey):null;
@@ -205,14 +206,37 @@ export function compileComputeIR(program, options={}) {
         const owner=program.modules.get(key(node.object.name));if(owner)return symbol(node.name,owner);
       }return null;
     }
+    function copyArray(target,source) {
+      if(!source?.array||source.type!==target.type)error('Whole-array assignment requires identical element types','GPU_TYPE');
+      if(target.dynamic===false)error('Whole-array destination must be a dynamic array','GPU_FIXED_ARRAY');
+      hasArrayValues=true;
+      out(`array_copy_value(${target.address},${source.address},${target.type==='string'?2:isWide(target.type)?1:0}u);`);
+    }
+    function arrayValue(node) {
+      if(node?.kind==='group')return arrayValue(node.expr);
+      const direct=nodeSymbol(node);if(direct?.array)return direct;
+      if(node?.kind==='id'&&!direct){const value=call({kind:'call',callee:node,args:[]},true);if(value?.array)return value;}
+      if(node?.kind==='call') {
+        const name=namedCallee(node.callee);
+        if(!hasProjectProcedure(name)&&['split','filter'].includes(key(name))) {
+          const temporary=allocate({name:'$arrayExpression',type:'string',bounds:[]},module,proc);
+          lowerStringArrayAssignment(temporary,node,{expr,arrayValue,out,strings,error,convert});hasStringArrays=true;return temporary;
+        }
+        const variable=nodeSymbol(node.callee);
+        if(variable?.array&&!node.args.length&&!(proc.returnArray&&node.callee.kind==='id'&&key(node.callee.name)===key(proc.name)))return variable;
+        const value=call(node,true);if(value?.array)return value;
+      }
+      error('Expected a typed array value','GPU_TYPE');
+    }
     const dates=createDateLowering({expr,convert,bind,error,enable:()=>{hasDate=hasDouble=true;}});
-    const strings=createStringLowering({arena,expr,bind,out,error,module,nodeSymbol,codePage});
+    const strings=createStringLowering({arena,expr,bind,out,error,module,arrayValue,codePage});
     const literal=(value,type)=>typeOf(type)==='string'?bind(arena.literal(value),'string',false):bind(typeOf(type)==='date'?dateLiteral(value):typeOf(type)==='currency'?currencyLiteral(value):typeOf(type)==='double'?doubleLiteral(value):shaderLiteral(value,typeOf(type)),typeOf(type));
     function address(node){
       const s=nodeSymbol(node);if(s)return s;
       if(node?.kind==='call'){
-        const array=nodeSymbol(node.callee);if(array?.array){
-          if(node.args.length<1||node.args.length>4)error('Array indexing supports one through four dimensions','GPU_BOUNDS');
+        const array=nodeSymbol(node.callee);if(array?.array&&!(proc.returnArray&&node.callee.kind==='id'&&key(node.callee.name)===key(proc.name))){
+          if(!node.args.length)return array;
+          if(node.args.length>4)error('Array indexing supports one through four dimensions','GPU_BOUNDS');
           const indexes=node.args.map(a=>convert(expr(a),'long'));
           while(indexes.length<4)indexes.push('0i');
           const addr=`a${serial++}`;out(`let ${addr}=array_at(${array.address},${node.args.length}u,vec4<i32>(${indexes.join(',')}));`);
@@ -293,8 +317,14 @@ export function compileComputeIR(program, options={}) {
       if(node.kind==='call')return call(node);
       error('Unsupported compute expression: '+node.kind,'GPU_EXPRESSION');
     }
-    function call(node){
+    function hasProjectProcedure(name) {
+      const n=key(name);
+      if(name.includes('.'))return procedures.has(n);
+      return procedures.has(key(module.name)+'.'+n)||[...procedures.values()].some(p=>key(p.proc.name)===n&&p.proc.scope!=='private');
+    }
+    function call(node,allowArray=false){
       const name=namedCallee(node.callee),n=key(name),args=node.args;
+      if(!hasProjectProcedure(name)) {
       const expect=(count)=>{if(args.length!==count)error(`${name} expects ${count} arguments`,'GPU_ARGUMENT');};
       const dateCall=dates.call(n,args);if(dateCall)return dateCall;
       const stringCall=strings.call(n,args);if(stringCall)return stringCall;
@@ -323,7 +353,7 @@ export function compileComputeIR(program, options={}) {
       }
       if(n==='lbound'||n==='ubound'){
         if(args.length<1||args.length>2)error(name+' expects an array and optional dimension','GPU_ARGUMENT');
-        const s=nodeSymbol(args[0]);if(!s?.array)error('Expected array reference','GPU_TYPE');
+        const s=arrayValue(args[0]);
         const dimension=args[1]?convert(expr(args[1]),'long'):'1i';return bind(`array_bound(${s.address},${dimension},${n==='ubound'})`,'long');
       }
       if(n==='rgb'){expect(3);const a=args.map(a=>convert(expr(a),'long'));return bind(`rgb(${a.join(',')})`,'long');}
@@ -351,8 +381,10 @@ export function compileComputeIR(program, options={}) {
         if(n==='computecircle')out(`draw_shape(4u,vec4<f32>(${a.join(',')},0.0),vec4<f32>(1.0,0.0,0.0,0.0),${color},true);`);
         return {code:'',type:'void'};
       }
+      }
       const callee=specialize(resolveProcedure(name,module),info.depth+1);
-      const bindings=new Map(),evaluated=[],locks=[];
+      const bindings=new Map(),evaluated=[],locks=[],copybacks=[];
+      if(callee.proc.returnArray&&!allowArray)error('Typed array result requires an array destination or array argument','GPU_TYPE');
       let positional=0,named=false;
       for(const arg of args){
         let slot;if(arg.kind==='named'){named=true;slot=callee.proc.params.findIndex(p=>key(p.name)===key(arg.name));if(slot<0)error('Unknown named argument: '+arg.name,'GPU_ARGUMENT');}
@@ -361,13 +393,19 @@ export function compileComputeIR(program, options={}) {
         if(arg.kind==='missing'){bindings.set(slot,null);continue;}
         const value=arg.kind==='named'?arg.expr:arg,pt=typeOf(p.storageType||p.type);
         if(p.byRef){
-          const ref=address(value);
-          // Fixed strings use a separate native argument copy-back contract.
-          // Do not alias their bounded slab as a variable-length String parameter.
-          if(ref?.type==='string'&&ref.stringStorage?.fixedLength)
-            error('Fixed-length String ByRef copy-back is not implemented; use a variable-length String temporary or a parenthesized value','GPU_FIXED_STRING_BYREF');
-          if(p.bounds!==null){if(!ref?.array||ref.type!==pt)error('ByRef array argument type mismatch','GPU_ARGUMENT');bindings.set(slot,ref.address);}
-          else if(ref){if(ref.array||ref.type!==pt)error('ByRef argument type mismatch; use parentheses for an explicit temporary','GPU_ARGUMENT');bindings.set(slot,ref.address);if(ref.arrayBase){const token=`lock${serial++}`;out(`let ${token}=array_lock(${ref.arrayBase});`);locks.push({token,base:ref.arrayBase});}}
+          const ref=p.bounds!==null?arrayValue(value):address(value);
+          if(p.bounds!==null){if(!ref?.array||ref.type!==pt)error('ByRef array argument type mismatch','GPU_ARGUMENT');if(ref.type==='string'&&ref.stringStorage?.fixedLength)error('Fixed-length String arrays cannot alias variable-length String array parameters','GPU_FIXED_STRING_BYREF');bindings.set(slot,ref.address);}
+          else if(ref){
+            if(ref.array||ref.type!==pt)error('ByRef argument type mismatch; use parentheses for an explicit temporary','GPU_ARGUMENT');
+            if(ref.type==='string'&&ref.stringStorage?.fixedLength) {
+              // Like the shared runtime binder: independent variable-length
+              // argument, formal-order copy-back only on normal completion.
+              const temporary=allocate({name:'$fixedArgument',type:'string',bounds:null},module,proc);
+              out(`put_s(${temporary.address},get_i(${ref.address}));`);
+              bindings.set(slot,temporary.address);copybacks.push({slot,target:ref.address,source:temporary.address});
+            }else bindings.set(slot,ref.address);
+            if(ref.arrayBase){const token=`lock${serial++}`;out(`let ${token}=array_lock(${ref.arrayBase});`);locks.push({token,base:ref.arrayBase});}
+          }
           else {const v=expr(value),s=allocate({name:'$argument',type:pt,bounds:null},module,proc);out(`${store(pt)}(${s.address},${convert(v,pt)});`);bindings.set(slot,s.address);}
         }else bindings.set(slot,convert(expr(value),pt));
       }
@@ -382,7 +420,13 @@ export function compileComputeIR(program, options={}) {
       const type=callee.proc.kind==='sub'?'void':typeOf(callee.proc.storageReturnType||callee.proc.returnType);
       lines.push({callee:callee.id,args:evaluated});
       out(`vb_line=${current.line}u;vb_source=${id}u;`);
-      const value=type==='void'?{code:'',type}:bind(`frame_${callee.id}.result`,type);
+      let value;
+      if(callee.proc.returnArray) {
+        const address=bind(`frame_${callee.id}.result`,'long');
+        value=allocate({name:'$arrayResult',type,bounds:[]},module,proc);
+        copyArray(value,{type,array:true,address:`u32(${address.code})`});
+      }else value=type==='void'?{code:'',type}:bind(`frame_${callee.id}.result`,type);
+      for(const copy of copybacks.sort((a,b)=>a.slot-b.slot))out(`put_s(${copy.target},get_i(${copy.source}));`);
       for(const lock of locks)out(`if(${lock.token}) {array_unlock(${lock.base});}`);
       out(`vb_line=${current.line}u;vb_source=${id}u;`);return value;
     }
@@ -403,7 +447,7 @@ export function compileComputeIR(program, options={}) {
       let next=`pc=${pc+1}u;`;
       switch(ins.op){
         case 'dim':for(const d of ins.decls)if(!d.constant&&d.initial){const s=locals.get(key(d.name)),v=expr(d.initial);out(`${store(s.type)}(${s.address},${convert(v,s.type)});`);}break;
-        case 'assign':{if(ins.objectSet)error('Set assignment requires object storage');const s=address(ins.target);if(s?.array&&lowerStringArrayAssignment(s,ins.expr,{expr,nodeSymbol,out,strings,error,convert})){hasStringArrays=true;break;}if(!s||s.array)error('Expected an assignable scalar or array element','GPU_NAME');const v=expr(ins.expr);out(`${store(s.type)}(${s.address},${convert(v,s.type)});`);break;}
+        case 'assign':{if(ins.objectSet)error('Set assignment requires object storage');const s=address(ins.target);if(s?.array&&!(ins.expr?.kind==='call'&&hasProjectProcedure(namedCallee(ins.expr.callee)))&&lowerStringArrayAssignment(s,ins.expr,{expr,arrayValue,out,strings,error,convert})){hasStringArrays=true;break;}if(s?.array){copyArray(s,arrayValue(ins.expr));break;}if(!s)error('Expected an assignable scalar or array element','GPU_NAME');const v=expr(ins.expr);out(`${store(s.type)}(${s.address},${convert(v,s.type)});`);break;}
         case 'stringMid':{
           const target=address(ins.target);if(!target||target.array||target.type!=='string')error('Mid assignment requires a String variable','GPU_TYPE');
           const start=convert(expr(ins.start),'long'),length=ins.length?convert(expr(ins.length),'long'):'2147483647i',value=strings.requireString(expr(ins.expr));
@@ -478,14 +522,14 @@ export function compileComputeIR(program, options={}) {
       }
       blocks.push({pc,line:ins.line||proc.line,operations:[...lines],next});
     }
-    const result=resultType==='void'?'':`${load(resultType)}(${locals.get(key(proc.name)).address})`;
-    const body=emitCallFrame({id,params,resultType,reset:[`vb_line=${proc.line}u;vb_source=${id}u;`,...reset],declarations,blocks,result});
+    const result=resultType==='void'?'':proc.returnArray?`i32(${locals.get(key(proc.name)).address})`:`${load(resultType)}(${locals.get(key(proc.name)).address})`;
+    const body=emitCallFrame({id,params,resultType:frameResultType,reset:[`vb_line=${proc.line}u;vb_source=${id}u;`,...reset],declarations,blocks,result});
     compiled.set(id,body);active.delete(id);sources.push({id,module:module.name,procedure:proc.name,line:proc.line,depth:info.depth});
   }
   compileProcedure(entry);
   if(initial.length>maxStateWords)error(`State requires ${initial.length} words; limit is ${maxStateWords}`,'GPU_LIMIT');
   const words=initial.length,stride=STATE_HEADER_WORDS+words;
-  const source=runtimeWGSL(words,arena.used||doubleArrays.length?stringsWGSL(arena.arrays,doubleArrays):'')+'\n'+(hasDouble?DOUBLE_WGSL:'')+'\n'+(hasCurrency?CURRENCY_WGSL:'')+'\n'+(hasDate?dateWGSL({twoDigitYearMax}):'')+'\n'+(codePage&&arena.used?codePageWGSL(codePage):'')+'\n'+(hasPatterns?stringPatternWGSL(maxStringLength):'')+'\n'+(hasStringArrays?stringArraysWGSL(maxStringLength,Math.max(1,...arena.arrays.map(s=>s.capacity))):'')+'\n'+[...compiled.values()].join('\n')+`
+  const source=runtimeWGSL(words,arena.used||doubleArrays.length?stringsWGSL(arena.arrays,doubleArrays):'')+'\n'+(hasDouble?DOUBLE_WGSL:'')+'\n'+(hasCurrency?CURRENCY_WGSL:'')+'\n'+(hasDate?dateWGSL({twoDigitYearMax}):'')+'\n'+(codePage&&arena.used?codePageWGSL(codePage):'')+'\n'+(hasPatterns?stringPatternWGSL(maxStringLength):'')+'\n'+(hasStringArrays?stringArraysWGSL(maxStringLength,Math.max(1,...arena.arrays.map(s=>s.capacity))):'')+'\n'+(hasArrayValues?arrayValuesWGSL({strings:arena.used}):'')+'\n'+[...compiled.values()].join('\n')+`
 @compute @workgroup_size(${workgroupSize})
 fn main(@builtin(global_invocation_id) invocation:vec3<u32>) {
   if(invocation.x>=params.count) {return;}

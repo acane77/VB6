@@ -5,11 +5,11 @@ let liveWorkers=0;
 /** Runs the same bounded interpreter in a Worker when supplied, otherwise locally. */
 export class UIClient {
   constructor({workerSource='',window=globalThis,timeout=3000,snapshot,catalog}={}){
-    this.catalog=catalog?boundedData(catalog):undefined;this.nextId=0;this.pending=new Map();this.timeout=timeout;this.disposed=false;this.lastSnapshot=snapshot||{state:{}};this.backend='bounded-main';
+    this.catalog=catalog?boundedData(catalog):undefined;this.nextId=0;this.pending=new Map();this.timeout=timeout;this.disposed=false;this.lastSnapshot=snapshot?boundedData(snapshot):{state:{}};this.backend='bounded-main';
     if(workerSource&&window.Worker&&liveWorkers<8){
       let url;try{url=window.URL.createObjectURL(new window.Blob([workerSource],{type:'text/javascript'}));this.worker=new window.Worker(url);liveWorkers++;this.backend='worker';this.worker.onmessage=e=>this.receive(e.data);this.worker.onerror=()=>this.fail(new UIError('worker','UI worker failed; restart the view to retry.'));this.worker.onmessageerror=()=>this.fail(new UIError('worker','Invalid worker message.'));}catch{this.worker=null;}finally{if(url)window.URL.revokeObjectURL(url);}
     }
-    if(!this.worker){this.runtime=new UIRuntime({catalog:this.catalog});if(snapshot)this.runtime.restore(snapshot);}
+    if(!this.worker){this.runtime=new UIRuntime({catalog:this.catalog});if(snapshot)this.runtime.restore(this.lastSnapshot);}
   }
   receive(message){const pending=this.pending.get(message?.id);if(!pending)return;this.pending.delete(message.id);clearTimeout(pending.timer);if(message.error)pending.reject(new UIError(message.error.code||'worker',message.error.message));else {this.lastSnapshot=message.snapshot;pending.resolve(message.result);}}
   request(method,payload={}){

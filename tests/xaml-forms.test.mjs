@@ -28,8 +28,8 @@ test('scalar property-grid changes preserve comments and attribute trivia',()=>{
   const f=project().modules[0].form,text=formToXaml(f,{schema}).replace('<vb:CommandButton','<!-- keep this -->\n  <vb:CommandButton'),next=structuredClone(f);next.controls[0].properties.Caption='Changed < & " caption';
   const r=synchronizeFormXaml(text,f,next,{schema});assert.equal(r.regenerated,false);assert.ok(r.text.includes('<!-- keep this -->'));assert.ok(r.text.includes('Changed &lt; &amp; &quot; caption'));assert.deepEqual(compileFormXaml(r.text,{form:next,schema}).form,next);
 });
-test('structural edits regenerate with an explicit original-source backup',()=>{
-  const f=project().modules[0].form,text=formToXaml(f,{schema}),next=structuredClone(f);next.controls.push(createControl('TextBox','Text1',0,0));const r=synchronizeFormXaml(text,f,next,{schema});assert.equal(r.regenerated,true);assert.equal(r.previousText,text);assert.deepEqual(compileFormXaml(r.text,{form:next,schema}).form,next);
+test('native structural additions preserve the original source',()=>{
+  const f=project().modules[0].form,text=formToXaml(f,{schema}),next=structuredClone(f);next.controls.push(createControl('TextBox','Text1',0,0));const r=synchronizeFormXaml(text,f,next,{schema});assert.equal(r.regenerated,false);assert.deepEqual(compileFormXaml(r.text,{form:next,schema}).form,next);
 });
 test('WinUI literals lower to native twips/flags and conventional event handlers',()=>{
   const r=compileFormXaml(wrap('<Canvas><Button x:Name="Button1" Canvas.Left="10" Canvas.Top="20" Width="80" Height="30" Content="Hello" FontSize="16" IsEnabled="False" Click="Button1_Click" /></Canvas>'),{schema});
@@ -78,9 +78,9 @@ test('VB6 lowering rejects brush opacity rather than discarding it',()=>{
   const result=compileFormXaml(wrap('<Page.Resources><SolidColorBrush x:Key="Tint" Color="#ff0000" Opacity="0.5" /></Page.Resources><Button Background="{StaticResource Tint}" />'),{schema});
   assert.equal(result.success,false);assert.match(result.diagnostics.map(d=>d.message).join('\n'),/opacity/);
 });
-test('VB6 lowering rejects implicit styles instead of pretending they have no effect',()=>{
+test('VB6 lowering applies implicit style setters',()=>{
   const result=compileFormXaml(wrap('<Page.Resources><Style TargetType="Button"><Setter Property="Width" Value="120" /></Style></Page.Resources><Button />'),{schema});
-  assert.equal(result.success,false);assert.match(result.diagnostics.map(d=>d.message).join('\n'),/Implicit/);
+  assert.equal(result.success,true,JSON.stringify(result.diagnostics));assert.equal(result.form.controls[0].properties.Width,1800);
 });
 test('VB6 lowering rejects external dictionaries even if no key is referenced',()=>{
   const result=compileFormXaml(wrap('<Page.Resources><ResourceDictionary Source="theme.xaml" /></Page.Resources><Button />'),{schema});
