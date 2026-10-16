@@ -141,7 +141,24 @@ Value GtkHost::builtin(Frame& frame,const std::string& raw,Args args) {
   if(name=="shell"){auto values=commandArguments(stringArgument(args,0));std::vector<char*> pointers;for(auto& value:values)pointers.push_back(value.data());pointers.push_back(nullptr);pid_t pid=0;int error=posix_spawnp(&pid,pointers[0],nullptr,nullptr,pointers.data(),environ);if(error)fail(error==ENOENT?53:error==EACCES?70:5,std::strerror(error));std::thread([pid]{int status;while(waitpid(pid,&status,0)<0&&errno==EINTR){}}).detach();return Value::real(double(pid));}
   if(name=="loadpicture"){auto path=stringArgument(args,0);if(path.empty())return Value::object(std::make_shared<GtkPicture>());if(path.find(u'\0')!=Text::npos)fail(52);return gtkLoadPicture(*this,readNativeResourceFile(std::filesystem::path(toUTF8(path))));}
   if(name=="loadrespicture"){auto format=integerArgument(args,1);if(format<0||format>2)fail(5);return gtkLoadPicture(*this,nativeResources(*runtime).picture(argument(args,0),int(format)));}
-  if(name=="savepicture"){auto picture=std::dynamic_pointer_cast<GtkPicture>(argument(args,0).asObject());if(!picture||!picture->pixels)fail(5);auto filename=toUTF8(stringArgument(args,1));if(filename.find('\0')!=std::string::npos)fail(52);auto extension=lower(std::filesystem::path(filename).extension().string());auto type=extension==".jpg"||extension==".jpeg"?"jpeg":extension==".bmp"?"bmp":extension==".tif"||extension==".tiff"?"tiff":"png";GError* error=nullptr;if(!gdk_pixbuf_save(picture->pixels,filename.c_str(),type,&error,nullptr)){auto message=std::string(error?error->message:"Picture save failed");if(error)g_error_free(error);fail(75,message);}return {};}
+  if(name=="savepicture") {
+    auto picture=std::dynamic_pointer_cast<GtkPicture>(argument(args,0).asObject());if(!picture||!picture->pixels)fail(5);
+    auto filename=toUTF8(stringArgument(args,1));if(filename.find('\0')!=std::string::npos)fail(52);
+    GError* error=nullptr;gboolean saved;
+    if(picture->pictureType==3&&!picture->encoded.empty()) {
+      // Like the other native host, preserve the complete validated ICO/CUR,
+      // including every frame and cursor hotspot, regardless of its filename.
+      const auto& bytes=picture->encoded;
+      saved=g_file_set_contents(filename.c_str(),reinterpret_cast<const gchar*>(bytes.data()),gssize(bytes.size()),&error);
+    } else {
+      auto extension=lower(std::filesystem::path(filename).extension().string());
+      const std::map<std::string,const char*> formats={{"","png"},{".png","png"},{".jpg","jpeg"},{".jpeg","jpeg"},{".bmp","bmp"},{".tif","tiff"},{".tiff","tiff"}};
+      auto found=formats.find(extension);
+      if(found==formats.end())fail(5,"SavePicture requires PNG, JPEG, BMP, TIFF, or an original ICO/CUR picture");
+      saved=gdk_pixbuf_save(picture->pixels,filename.c_str(),found->second,&error,nullptr);
+    }
+    if(!saved){auto message=std::string(error?error->message:"Picture save failed");if(error)g_error_free(error);fail(75,message);}return {};
+  }
   if(name=="savesetting"||name=="getsetting"||name=="deletesetting"||name=="getallsettings") {
     Settings settings;auto app=settingPart(argument(args,0)),section=settingPart(argument(args,1)),group=app+"/"+section;
     if(name=="getallsettings"){gsize count=0;auto** keys=g_key_file_get_keys(settings.keyfile,group.c_str(),&count,nullptr);if(!keys||!count){g_strfreev(keys);return {};}auto array=std::make_shared<Array>("variant",Bounds{{0,int32_t(count)-1},{0,1}},true,runtime->maxArrayElements);for(size_t i=0;i<count;++i){auto* value=g_key_file_get_string(settings.keyfile,group.c_str(),keys[i],nullptr);array->values[i]=Value::string(fromUTF8(keys[i]));array->values[i+count]=Value::string(value?fromUTF8(value):Text());g_free(value);}g_strfreev(keys);return Value::array(array);}
