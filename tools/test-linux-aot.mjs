@@ -136,13 +136,15 @@ export async function testLinuxAOT({rebuild=false,runtimeDirectory,reportDirecto
     const corrupted=path.join(work,'corrupted-loader');await fs.writeFile(corrupted,broken,{mode:0o755});
     await assert.rejects(run(corrupted),error=>(error.exitCode??error.code)===2&&/Invalid AOT project payload sizes/.test(error.output||''));
     report.checks.push('Native loader rejects malformed project metadata before executing project code');
-    const badEntries=structuredClone(image.metadataJSON);badEntries.entries[0]=4294967296;
-    const altered=new TextEncoder().encode(JSON.stringify(badEntries)),entryBytes=resourceCase.result.executable.slice();
-    assert.ok(altered.length<=image.metadata.fileSize-(image.metadataOffset-image.metadata.offset)-16);
-    new DataView(entryBytes.buffer).setUint32(image.metadataOffset+8,altered.length,true);entryBytes.set(altered,image.metadataOffset+16);
-    const invalidEntry=path.join(work,'invalid-procedure-entry');await fs.writeFile(invalidEntry,entryBytes,{mode:0o755});
-    await assert.rejects(run(invalidEntry),error=>(error.exitCode??error.code)===2&&/Invalid AOT procedure address/.test(error.output||''));
-    report.checks.push('Native loader rejects procedure offsets outside the complete 64-bit address range');
+    for(const offset of [Math.ceil(image.codeSize/16)*16,4294967296]) {
+      const badEntries=structuredClone(image.metadataJSON);badEntries.entries[0]=offset;
+      const altered=new TextEncoder().encode(JSON.stringify(badEntries)),entryBytes=resourceCase.result.executable.slice();
+      assert.ok(altered.length<=image.metadata.fileSize-(image.metadataOffset-image.metadata.offset)-16);
+      new DataView(entryBytes.buffer).setUint32(image.metadataOffset+8,altered.length,true);entryBytes.set(altered,image.metadataOffset+16);
+      const invalidEntry=path.join(work,'invalid-procedure-entry-'+offset);await fs.writeFile(invalidEntry,entryBytes,{mode:0o755});
+      await assert.rejects(run(invalidEntry),error=>(error.exitCode??error.code)===2&&/Invalid AOT (procedure address|integer metadata)/.test(error.output||''));
+    }
+    report.checks.push('Native loader rejects out-of-code and overflowing procedure offsets');
 
     for(const [name,value]of Object.entries(readLinuxAOTSourceProvenance(root)))
       assert.equal(runtime.manifest.provenance?.[name],value,'Source changed during native acceptance: '+name);

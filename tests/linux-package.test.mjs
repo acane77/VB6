@@ -41,6 +41,13 @@ test('Linux import and export reject symlinks and pre-cancelled operations',asyn
   t.after(()=>fs.rm(directory,{recursive:true,force:true}));
   const source=path.join(directory,'project.vb6web');await fs.writeFile(source,JSON.stringify(project));
   assert.deepEqual(await readLinuxProject(source),project);
+  const native=path.join(directory,'native-source');await fs.mkdir(native);
+  await fs.writeFile(path.join(native,'NativeRead.vbp'),'Type=Exe\nModule=MainModule; Main.bas\nStartup="Sub Main"\nName="NativeRead"\n');
+  await fs.writeFile(path.join(native,'Main.bas'),'Attribute VB_Name = "MainModule"\n'+project.modules[0].code+'\n');
+  for(const input of [native,path.join(native,'NativeRead.vbp')]) {
+    const imported=await readLinuxProject(input);assert.equal(imported.name,'NativeRead');
+    assert.ok(imported.modules.some(module=>module.name==='MainModule'&&module.code.includes('LINUX_PACKAGE_NATIVE')));
+  }
   const controller=new AbortController();controller.abort();
   await assert.rejects(exportLinuxProject(project,{out:path.join(directory,'cancelled'),signal:controller.signal}),{name:'AbortError'});
   await assert.rejects(fs.stat(path.join(directory,'cancelled')),error=>error.code==='ENOENT');
@@ -65,7 +72,7 @@ test('Linux CLI defaults to a native ELF ZIP and extracts a complete application
 test('independently packed Linux SDK imports and exports without network access',async t=>{
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'linux-isolated-sdk-'));
   t.after(()=>fs.rm(directory,{recursive:true,force:true}));
-  const packed=JSON.parse(execFileSync('npm',['pack','--offline','--ignore-scripts','--json','--pack-destination',directory],{cwd:path.resolve('packages/linux-native'),encoding:'utf8'}));
+  const packed=JSON.parse(execFileSync('npm',['pack','--offline','--ignore-scripts','--json','--cache',path.join(directory,'cache'),'--pack-destination',directory],{cwd:path.resolve('packages/linux-native'),encoding:'utf8'}));
   execFileSync('tar',['-xzf',path.join(directory,packed[0].filename),'-C',directory]);
   const api=await import(pathToFileURL(path.join(directory,'package/dist/index.js')).href);
   const node=await import(pathToFileURL(path.join(directory,'package/src/node.mjs')).href);
