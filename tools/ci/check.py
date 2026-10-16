@@ -88,6 +88,15 @@ def audit(root=ROOT):
         raise ValueError('Missing native AOT platform')
     if jobs['macos-browser-native']['needs'] != ['authoring-exports']:
         raise ValueError('Native execution must depend on browser exports')
+    if jobs.get('linux', {}).get('runs-on') != 'ubuntu-24.04':
+        raise ValueError('Linux GTK AOT must execute on the declared native platform')
+    linux_commands = [step.get('run', '') for step in jobs['linux']['steps']]
+    if not any('tools/test-linux-aot.mjs --rebuild' in command for command in linux_commands):
+        raise ValueError('Linux native runtime must be rebuilt and executed from current sources')
+    if jobs.get('linux-browser-native', {}).get('needs') != ['authoring-exports']:
+        raise ValueError('Linux native execution must consume actual browser exports')
+    if not any(step.get('with', {}).get('pattern') == 'linux-direct-browser-*' for step in jobs['linux-browser-native']['steps']):
+        raise ValueError('Linux execution must use this run\'s browser archives')
     if jobs['advanced-editor']['needs'] != ['advanced-build']:
         raise ValueError('All engines must consume the shared actual editor build')
     suites = json.loads((root / 'tools/ci/suites.json').read_text())

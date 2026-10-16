@@ -26,6 +26,10 @@ class WorkflowAuditTests(unittest.TestCase):
     def test_compute_native_reference_download_required(self):
         self.reject(lambda w:[s['with'].update({'name':'unrelated'}) for s in w['jobs']['compute-gpu']['steps'] if s.get('uses')=='actions/download-artifact@v4'])
     def test_gate_omission_rejected(self):self.reject(lambda w:w['jobs']['test']['needs'].remove('macos-browser-native'))
+    def test_linux_runtime_rebuild_required(self):
+        self.reject(lambda w:[s.update({'run':'npm run test:linux'}) for s in w['jobs']['linux']['steps'] if '--rebuild' in s.get('run','')])
+    def test_linux_browser_native_requires_artifacts(self):
+        self.reject(lambda w:w['jobs']['linux-browser-native'].update({'needs':['hygiene']}))
     def test_skippable_gate_rejected(self):self.reject(lambda w:w['jobs']['test'].update({'if':'success()'}))
     def test_failure_suppression_rejected(self):self.reject(lambda w:w['jobs']['figma'].update({'continue-on-error':True}))
     def test_missing_engine_rejected(self):self.reject(lambda w:w['jobs']['figma']['strategy']['matrix']['browser'].remove('webkit'))
