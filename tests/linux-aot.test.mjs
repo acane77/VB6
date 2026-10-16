@@ -47,6 +47,19 @@ test('Linux catalog rejects unavailable controls and Declares before export',()=
   const form={schema:1,name:'Unsupported',startup:'F',modules:[{name:'F',kind:'form',code:'',form:{name:'F',type:'Form',properties:{},controls:[{name:'Browser',type:'WebBrowser',properties:{}}],menus:[]}}]};
   assert.throws(()=>compileLinuxAOT(form),error=>error instanceof LinuxCompileError&&error.diagnostics[0].code==='LIN220');
 });
+test('Linux Declare callbacks use the explicit four-Long timer ABI',()=>{
+  const source=parameters=>`Declare Function SetTimer Lib "user32" (ByVal window As Long, ByVal id As Long, ByVal interval As Long, ByVal callback As Long) As Long
+Sub Tick(${parameters})
+End Sub
+Sub Main()
+  Dim id As Long
+  id = SetTimer(0, 0, 10, AddressOf Tick)
+End Sub`;
+  const parameters='ByVal window As Long, ByVal message As Long, ByVal id As Long, ByVal time As Long';
+  const make=code=>({...project,modules:[{name:'MainModule',kind:'module',code}]});assert.equal(compileLinuxAOT(make(source(parameters))).report.imports[0].id,'user32.SetTimer');
+  for(const invalid of ['ByVal value As Long',parameters.replace('time As Long','time As Double'),parameters.replace('ByVal id','ByRef id')])assert.throws(()=>compileLinuxAOT(make(source(invalid))),error=>error instanceof LinuxCompileError&&error.diagnostics[0].code==='LIN230');
+  assert.throws(()=>compileLinuxAOT(make('Declare Function GetTickCount64 Lib "kernel32" () As Long\nSub Main()\nEnd Sub')),error=>error.diagnostics[0].code==='LIN210');
+});
 test('ELF linking appends scalable RX and R mappings preserving native addresses',()=>{
   const before=inspectLinuxELF(template),after=inspectLinuxELF(exported.executable,{requireProject:true});assert.equal(after.programCount,before.programCount+2);assert.equal(after.code.flags&7,5);assert.equal(after.metadata.flags&7,4);
   assert.deepEqual([...after.symbols],[...before.symbols]);assert.equal(after.phdr.address,after.metadata.address);assert.equal(after.phdr.offset,after.metadata.offset);

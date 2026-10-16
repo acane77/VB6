@@ -59,11 +59,11 @@ export class DirectLowering extends MacOSLowering {
       case 'binary':return f.call('binary',this.n(node.op),e(node.left),e(node.right));
       case 'typeof':return f.call('is_type',e(node.expr),this.n(node.name));
       case 'addressOf':{
-        this.platform.validateCallback?.(node,this);
         const parts=node.name.split('.'),name=lower(parts.pop());let owners;
         if(parts.length)owners=[this.program.modules.get(lower(parts.join('.')))];else if(this.module.procedures.has(name))owners=[this.module];else owners=[...this.program.modules.values()].filter(m=>m.kind==='module'&&m.procedures.has(name)&&m.procedures.get(name).scope!=='private');
         owners=owners.filter(Boolean);if(owners.length!==1||owners[0].kind!=='module')this.fail('AddressOf must resolve one standard-module procedure','MAC230');
         const p=owners[0].procedures.get(name);if(!p||p.external||p.returnArray||p.params.some(p=>p.optional||p.paramArray||p.byRef||p.bounds!==null&&p.bounds!==undefined))this.fail('Native callbacks require fixed ByVal scalar parameters','MAC230');
+        this.platform.validateCallback?.(node,this,owners[0],p);
         return f.call('callback',this.n(owners[0].name),this.n(p.name));
       }
       default:this.fail('Unsupported AOT expression '+node.kind,'MACA100');

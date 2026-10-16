@@ -21,7 +21,8 @@ export function compileLinuxAOT(input,options={}){
     const program=compileProject(project);
     if(!program.valid){const error=new LinuxCompileError('VB6 frontend rejected the Linux project');error.diagnostics=program.diagnostics;throw error;}
     const controls=linuxControlReport(project),lowering=new DirectLowering(program,normalized,{
-      CompileError:LinuxCompileError,diagnosticPrefix:'LIN',resolveDeclaration:resolveLinuxDeclaration,emitFunctions:emitLinuxAOTFunctions
+      CompileError:LinuxCompileError,diagnosticPrefix:'LIN',resolveDeclaration:resolveLinuxDeclaration,emitFunctions:emitLinuxAOTFunctions,
+      validateCallback(node,lowering,owner,procedure){if(procedure.params.length!==4||procedure.params.some(p=>String(p.storageType||p.type).toLowerCase()!=='long'))lowering.fail('Linux AddressOf requires a SetTimer callback with four fixed ByVal As Long parameters','LIN230');}
     }),emitted=lowering.emit();
     const report={target:LINUX_TARGET.id,architecture:'x86_64',format:'ELF64',toolkit:'gtk3',artifact:'native-object-code',
       compiled:false,codegen:'x86_64-aot',runtime:'vb6-native',abi:AOT_ABI,modules:program.modules.size,

@@ -4,23 +4,25 @@ import {LinuxCompileError} from './target.js';
 export const LINUX_CONTROLS=Object.freeze({
   Form:'GtkWindow',MDIForm:'GtkWindow',Menu:'GtkMenuItem',CommandButton:'GtkButton',
   CheckBox:'GtkCheckButton',OptionButton:'GtkRadioButton',Label:'GtkLabel',TextBox:'GtkEntry/GtkTextView',
-  RichTextBox:'GtkTextView',Frame:'GtkFrame',PictureBox:'GtkDrawingArea',Image:'GtkImage',
+  RichTextBox:'GtkTextView',Frame:'GtkFrame',PictureBox:'GtkFixed/Cairo',Image:'GtkDrawingArea/GdkPixbuf',
   Line:'GtkDrawingArea',Shape:'GtkDrawingArea',ComboBox:'GtkComboBoxText',ListBox:'GtkTreeView',
   DriveListBox:'GtkComboBoxText',DirListBox:'GtkTreeView',FileListBox:'GtkTreeView',
   HScrollBar:'GtkScrollbar',VScrollBar:'GtkScrollbar',Slider:'GtkScale',UpDown:'GtkSpinButton',
   ProgressBar:'GtkProgressBar',DTPicker:'GtkCalendar',MonthView:'GtkCalendar',
   TreeView:'GtkTreeView',ListView:'GtkTreeView',MSFlexGrid:'GtkTreeView',MSHFlexGrid:'GtkTreeView',DataGrid:'GtkTreeView',
-  TabStrip:'GtkNotebook',SSTab:'GtkNotebook',Toolbar:'GtkToolbar',StatusBar:'GtkStatusbar',
-  ImageList:'GdkPixbuf',Timer:'GLib timeout',CommonDialog:'GtkFileChooserDialog'
+  TabStrip:'GtkNotebook',SSTab:'GtkNotebook',Toolbar:'GtkToolbar',StatusBar:'GtkBox/GtkButton',
+  ImageList:'GdkPixbuf',Timer:'GLib timeout',CommonDialog:'GtkFileChooserDialog',MSChart:'GtkDrawingArea/Cairo'
 });
 const signatures={
-  kernel32:{GetTickCount:0,GetTickCount64:0,Sleep:1,GetCurrentProcessId:0,GetCurrentThreadId:0,
+  kernel32:{GetTickCount:0,Sleep:1,GetCurrentProcessId:0,GetCurrentThreadId:0,
     GetLastError:0,SetLastError:1,MulDiv:3,GetModuleHandle:1},
   user32:{IsWindow:1,IsWindowVisible:1,IsWindowEnabled:1,EnableWindow:2,ShowWindow:2,
     SetWindowText:2,GetWindowText:3,GetWindowTextLength:1,GetClientRect:2,GetWindowRect:2,
     MoveWindow:6,SetFocus:1,GetFocus:0,GetActiveWindow:0,SetActiveWindow:1,DestroyWindow:1,
     GetParent:1,SetTimer:4,KillTimer:2,MessageBeep:1,MessageBox:4,GetSystemMetrics:1,
-    GetSysColor:1,InvalidateRect:3,UpdateWindow:1,GetDC:1,ReleaseDC:2}
+    GetSysColor:1,InvalidateRect:3,UpdateWindow:1,GetDC:1,ReleaseDC:2},
+  gdi32:{GetStockObject:1,CreatePen:3,CreateSolidBrush:1,DeleteObject:1,SelectObject:2,
+    SetTextColor:2,SetBkColor:2,SetBkMode:2,MoveToEx:4,LineTo:3,Rectangle:5,Ellipse:5,SetPixel:4,TextOut:5}
 };
 export const LINUX_API_SIGNATURES=Object.freeze(Object.fromEntries(Object.entries(signatures).map(([name,table])=>[name,Object.freeze(table)])));
 export function resolveLinuxDeclaration(procedure,module=''){
