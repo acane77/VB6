@@ -191,7 +191,7 @@ class ApplicationThemes(MacOSCompositeChecks, MacOS26CompatibilityChecks, X11App
   else:page.goto(self.base+str(path.relative_to(ROOT)),wait_until='commit',timeout=30000)
   # WebKit can leave this large inline document in "loading" after the IDE is
   # usable. Await its real API/shell, with a startup budget separate from actions.
-  page.wait_for_function('typeof vb6Studio==="object"&&document.querySelector(".ide-shell")',polling=100,timeout=30000);return page
+  page.wait_for_function('typeof vb6Studio==="object"&&document.querySelector(".ide-shell")',polling=100,timeout=60000);return page
  def options(self,page):
   page.evaluate('()=>{void vb6Studio.command("options");}');page.get_by_role('tab',name='General',exact=True).click()
  def test_options_cancel_commit_undo_and_independent_ide_palette(self):

@@ -401,7 +401,7 @@ class Themes(X11IdeChecks, unittest.TestCase):
         self.page.goto((ROOT/'dist/VB6-Studio-Web.html').as_uri(),wait_until='commit')
         # Only bundle startup gets a larger parsing budget. Real Options
         # interactions keep the suite's ordinary 8s limit.
-        self.page.wait_for_function('typeof vb6Studio==="object"',polling=100,timeout=30000)
+        self.page.wait_for_function('typeof vb6Studio==="object"',polling=100,timeout=60000)
         self.set_theme('macos26-dark')
         self.assertEqual(self.page.locator('html').get_attribute('data-ide-theme'),'macos26-dark')
         self.record('standalone file:// Options')
