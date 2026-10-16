@@ -25,11 +25,12 @@ const signatures={
     SetTextColor:2,SetBkColor:2,SetBkMode:2,MoveToEx:4,LineTo:3,Rectangle:5,Ellipse:5,SetPixel:4,TextOut:5}
 };
 export const LINUX_API_SIGNATURES=Object.freeze(Object.fromEntries(Object.entries(signatures).map(([name,table])=>[name,Object.freeze(table)])));
+const textAdapters=new Set(['GetModuleHandle','SetWindowText','GetWindowText','GetWindowTextLength','MessageBox','TextOut']);
 export function resolveLinuxDeclaration(procedure,module=''){
   if(procedure.returnArray)throw new LinuxCompileError('Declare array returns require an explicit native array ABI',module,procedure.line,'LIN213');
   const external=procedure.external,library=String(external.library).toLowerCase().replace(/\.dll$/,''),requested=String(external.entry),table=LINUX_API_SIGNATURES[library];
   let name=table&&Object.keys(table).find(name=>name.toLowerCase()===requested.toLowerCase()),wide=false;
-  if(!name&&/[AW]$/i.test(requested)){name=table&&Object.keys(table).find(name=>name.toLowerCase()===requested.slice(0,-1).toLowerCase());wide=/W$/i.test(requested);}
+  if(!name&&/[AW]$/i.test(requested)){name=table&&Object.keys(table).find(name=>textAdapters.has(name)&&name.toLowerCase()===requested.slice(0,-1).toLowerCase());wide=/W$/i.test(requested);}
   if(!name)throw new LinuxCompileError(`No native Linux adapter for Declare ${procedure.name} Lib "${external.library}" Alias "${requested}"`,module,procedure.line,'LIN210');
   if(procedure.params.length!==table[name])throw new LinuxCompileError(`Declare ${procedure.name} requires ${table[name]} parameters for ${name}`,module,procedure.line,'LIN211');
   const forbidden=procedure.params.find(p=>p.paramArray||p.autoNew||p.bounds!==null&&p.bounds!==undefined||['object','variant'].includes(p.type.toLowerCase()));

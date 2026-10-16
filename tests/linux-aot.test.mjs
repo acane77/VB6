@@ -59,6 +59,7 @@ End Sub`;
   const make=code=>({...project,modules:[{name:'MainModule',kind:'module',code}]});assert.equal(compileLinuxAOT(make(source(parameters))).report.imports[0].id,'user32.SetTimer');
   for(const invalid of ['ByVal value As Long',parameters.replace('time As Long','time As Double'),parameters.replace('ByVal id','ByRef id')])assert.throws(()=>compileLinuxAOT(make(source(invalid))),error=>error instanceof LinuxCompileError&&error.diagnostics[0].code==='LIN230');
   assert.throws(()=>compileLinuxAOT(make('Declare Function GetTickCount64 Lib "kernel32" () As Long\nSub Main()\nEnd Sub')),error=>error.diagnostics[0].code==='LIN210');
+  assert.throws(()=>compileLinuxAOT(make('Declare Sub SleepW Lib "kernel32" (ByVal interval As Long)\nSub Main()\nEnd Sub')),error=>error.diagnostics[0].code==='LIN210');
 });
 test('ELF linking appends scalable RX and R mappings preserving native addresses',()=>{
   const before=inspectLinuxELF(template),after=inspectLinuxELF(exported.executable,{requireProject:true});assert.equal(after.programCount,before.programCount+2);assert.equal(after.code.flags&7,5);assert.equal(after.metadata.flags&7,4);
