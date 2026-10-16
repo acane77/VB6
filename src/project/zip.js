@@ -17,7 +17,14 @@ function registerZipPath(entries,parents,name,directory){
 }
 function concat(parts){const result=new Uint8Array(parts.reduce((s,p)=>s+p.length,0));let at=0;for(const p of parts){result.set(p,at);at+=p.length;}return result;}
 function header(size){const bytes=new Uint8Array(size);return {bytes,view:new DataView(bytes.buffer)};}
-export function writeZip(files,{reproducible=false}={}){if(Object.keys(files).length>=65535)throw new Error('Too many entries for classic ZIP output');const locals=[],centrals=[],entries=new Map(),parents=new Set();let offset=0;const now=new Date(),dosTime=reproducible?0:(now.getHours()<<11)|(now.getMinutes()<<5)|(now.getSeconds()>>1),dosDate=reproducible?33:((Math.max(1980,now.getFullYear())-1980)<<9)|((now.getMonth()+1)<<5)|now.getDate();
+export function writeZip(files,{reproducible=false}={}){
+  // Validate every path before Object.entries reads any payload getter.
+  const preflight=new Map(),ancestors=new Set();
+  for(const name of Object.keys(files)){
+    if(unsafePath(name))throw new Error('Unsafe ZIP path');
+    registerZipPath(preflight,ancestors,name.replace(/\\/g,'/').split('/').filter(p=>p&&p!=='.').join('/'),/[\\/]$/.test(name));
+  }
+if(Object.keys(files).length>=65535)throw new Error('Too many entries for classic ZIP output');const locals=[],centrals=[],entries=new Map(),parents=new Set();let offset=0;const now=new Date(),dosTime=reproducible?0:(now.getHours()<<11)|(now.getMinutes()<<5)|(now.getSeconds()>>1),dosDate=reproducible?33:((Math.max(1980,now.getFullYear())-1980)<<9)|((now.getMonth()+1)<<5)|now.getDate();
   for(const [path,input]of Object.entries(files)){if(unsafePath(path))throw new Error('Unsafe ZIP path');const normalized=path.replace(/\\/g,'/').split('/').filter(p=>p&&p!=='.').join('/'),directory=/[\\/]$/.test(path);registerZipPath(entries,parents,normalized,directory);const name=encoder.encode(path),data=typeof input==='string'?encoder.encode(input):asBytes(input),crc=crc32(data);if(decoder.decode(name)!==path)throw new Error('ZIP filename contains invalid Unicode');if(name.length>65535||data.length>=0xffffffff)throw new Error('ZIP entry exceeds classic format limits');const h=header(30),v=h.view;v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint16(6,0x800,true);v.setUint16(10,dosTime,true);v.setUint16(12,dosDate,true);v.setUint32(14,crc,true);v.setUint32(18,data.length,true);v.setUint32(22,data.length,true);v.setUint16(26,name.length,true);locals.push(h.bytes,name,data);
     const c=header(46),cv=c.view;cv.setUint32(0,0x02014b50,true);cv.setUint16(4,20,true);cv.setUint16(6,20,true);cv.setUint16(8,0x800,true);cv.setUint16(12,dosTime,true);cv.setUint16(14,dosDate,true);cv.setUint32(16,crc,true);cv.setUint32(20,data.length,true);cv.setUint32(24,data.length,true);cv.setUint16(28,name.length,true);cv.setUint32(42,offset,true);centrals.push(c.bytes,name);offset+=h.bytes.length+name.length+data.length;
   }

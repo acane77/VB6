@@ -149,6 +149,7 @@ export class DOMScene {
     // small native island is needed; opened result bodies still use GPU paint.
     if ((node.tagName === 'SUMMARY' && node.parentElement?.tagName === 'DETAILS' && summaryOf(node.parentElement) === node) ||
         (node.tagName === 'DETAILS' && !summaryOf(node))) return 'native disclosure summary';
+    if(node.matches('[data-tui-paint],[data-tui-chrome],[data-tui-chrome-target]'))return 'owned character-cell presentation';
     if (requiresNativeShadowPaint(node) || NATIVE.has(node.tagName.toUpperCase()) || node.isContentEditable || node.matches('[data-vb-native-render],.code-editor,.source-editor,.editor-container,.vb-richtext')) return 'native control, image or editor';
     if (number(style.opacity) !== 1 || style.filter !== 'none' || (style.backdropFilter && style.backdropFilter !== 'none') || style.mixBlendMode !== 'normal') return 'native compositing';
     if (style.clipPath !== 'none' || (style.maskImage && style.maskImage !== 'none') || style.writingMode !== 'horizontal-tb') return 'native clipping or writing mode';

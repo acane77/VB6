@@ -1,3 +1,4 @@
+import {displayScale} from '../rendering/coordinate-space.js';
 import {arrangeFormEdit} from '../layout/model.js';
 import {layoutEnabled} from '../layout/contract.js';
 import {renderDesignerSelection} from './selection.js';
@@ -19,6 +20,7 @@ export class FormDesigner extends Signal {
     // The root capture phase belongs to optional workspace/auto-layout tools.
     // Handle base gestures on the plane in capture, still before native widgets,
     // so a tool that consumes an event cannot start a second base gesture.
+    this.plane.addEventListener('vb-presentation-geometry',()=>this.scheduleSelection());
     this.plane.addEventListener('pointerdown', e => this.safely(() => this.pointerDown(e)), true);
     this.root.addEventListener('pointerdown', e => {if (e.target === this.root) this.safely(() => this.pointerDown(e));});
     this.root.addEventListener('keydown', e => this.safely(() => this.keydown(e)));
@@ -88,20 +90,20 @@ export class FormDesigner extends Signal {
   }
   controlRect(control) {
     const view = this.formView.controls.find(v => v.model.id === control.id); if (!view || view.node.closest('[hidden]')) return null;
-    const rect = view.node.getBoundingClientRect(), parent = this.formView.content.getBoundingClientRect();
-    return {x: (rect.left - parent.left) / this.zoom, y: (rect.top - parent.top) / this.zoom, width: rect.width / this.zoom, height: rect.height / this.zoom};
+    const rect = view.node.getBoundingClientRect(), parent = this.formView.content.getBoundingClientRect(), scale=displayScale(this.formView.content,this.zoom);
+    return {x: (rect.left - parent.left) / scale.x, y: (rect.top - parent.top) / scale.y, width: rect.width / scale.x, height: rect.height / scale.y};
   }
   containerRect(control) {
     const view = this.formView.controls.find(v => v.model.id === control?.id), host = view?.childHost || this.formView.content;
-    const rect = host.getBoundingClientRect(), root = this.formView.content.getBoundingClientRect();
-    return {x: (rect.left - root.left) / this.zoom + host.clientLeft, y: (rect.top - root.top) / this.zoom + host.clientTop, width: host.clientWidth, height: host.clientHeight};
+    const rect = host.getBoundingClientRect(), root = this.formView.content.getBoundingClientRect(), scale=displayScale(this.formView.content,this.zoom);
+    return {x: (rect.left - root.left) / scale.x + host.clientLeft, y: (rect.top - root.top) / scale.y + host.clientTop, width: host.clientWidth, height: host.clientHeight};
   }
   renderSelection() {renderDesignerSelection(this);}
   reflow(before, edited = []) {
     if (!layoutEnabled(this.project)) return false;
     const logical = clone(before); materializeTabPages(logical); arrangeFormEdit(logical, this.module.form, edited); this.refreshControlPositions(); return true;
   }
-  position(event) {const rect = this.formView.content.getBoundingClientRect(); return {x: (event.clientX - rect.left) / this.zoom, y: (event.clientY - rect.top) / this.zoom};}
+  position(event) {const rect = this.formView.content.getBoundingClientRect(), scale=displayScale(this.formView.content,this.zoom); return {x: (event.clientX - rect.left) / scale.x, y: (event.clientY - rect.top) / scale.y};}
   snap(value) {const grid = this.settings.snapToGrid === false ? 15 : Number(this.settings.gridSize) || 120; return Math.round(value / grid) * grid;}
   transaction(label, fn) {
     const before = clone(this.module.form);

@@ -1,3 +1,4 @@
+import {registerAdvancedPresentation} from './presentation.js';
 import {DebugInlineValues} from './debug-inline-values.js';
 import {guardLinkedEditingCancellation} from './monaco-compat.js';
 import {chooseSnippet,navigateLanguageLocation} from './navigation.js';
@@ -36,7 +37,7 @@ export class AdvancedSurface {
       unicodeHighlight:{ambiguousCharacters:true,invisibleCharacters:true},padding:{top:5,bottom:5},largeFileOptimizations:true});
     const view=this.view,state={view,pane,disposables:[],decorations:view.createDecorationsCollection()};this.views.push(state);
     guardLinkedEditingCancellation(view,error=>this.runtime.report(error));
-    const viewDisposables=state.disposables;
+    const viewDisposables=state.disposables;state.presentation=registerAdvancedPresentation(this,state);viewDisposables.push(state.presentation);
     if(!this.xaml){state.inlineValues=new DebugInlineValues(this,view);viewDisposables.push(state.inlineValues);}
     const activate=()=>{if(this.view!==view){this.peek?.dispose(false);this.view=view;}this.runtime.lastActive=this;};
     viewDisposables.push(view.onDidChangeCursorSelection(()=>{if(this.view===view)this.cursorChanged();}));
@@ -159,7 +160,7 @@ export class AdvancedSurface {
   readOnly(){return this.xaml?this.runtime.ide.runState!=='design'||!!this.legacy.input.readOnly||!!this.runtime.ide.documents.designers.get(this.record.moduleId)?.locked:this.runtime.ide.runState==='running'||!!this.legacy.readOnly;}
   refreshInlineValues(){for(const state of this.views)state.inlineValues?.refresh();}
   updateReadOnly(){for(const {view}of this.views)view.updateOptions({readOnly:this.readOnly()});this.refreshInlineValues();}
-  appearance(){const a=this.runtime.ide.appearance;for(const {view}of this.views)view.updateOptions({fontSize:a.editorSize||13,fontFamily:a.editorFont||'monospace',lineHeight:(a.editorSize||13)+4});this.record.model.updateOptions({tabSize:this.runtime.ide.project.settings.tabWidth||4,insertSpaces:true});}
+  appearance(){const a=this.runtime.ide.appearance;for(const state of this.views){state.view.updateOptions({fontSize:a.editorSize||13,fontFamily:a.editorFont||'monospace',lineHeight:(a.editorSize||13)+4});state.presentation?.refresh();}this.record.model.updateOptions({tabSize:this.runtime.ide.project.settings.tabWidth||4,insertSpaces:true});}
   decorate(){
     this.refreshInlineValues();
     if(!this.view||this.xaml)return;

@@ -1,3 +1,4 @@
+import {displayScale} from '../rendering/coordinate-space.js';
 import {el} from '../core/core.js';
 import {modal} from '../ide/ui.js';
 import {formatAnchor,parseAnchor} from '../../packages/auto-layout/src/index.js';
@@ -20,14 +21,14 @@ export async function anchorDialog(value=5,title='Anchoring') {
 export function anchorGuideNodes(designer,snapshot=null) {
   if(!layoutEnabled(designer.project))return [];
   const views=snapshot?.views||new Map(designer.formView.controls.map(v=>[v.model.id,v])),nodes=[],parents=new Map();
-  const root=snapshot?.root||designer.formView.content.getBoundingClientRect(),z=designer.zoom;
+  const root=snapshot?.root||designer.formView.content.getBoundingClientRect(),scale=displayScale(designer.formView.content,designer.zoom);
   parents.set(designer.formView.content,root);
   for(const c of designer.selected()) {
     if(!layoutEligible(c)||Number(c.properties.Dock||0))continue;
     const r=snapshot?snapshot.rects.get(c.id):designer.controlRect(c),view=views.get(c.id);if(!r||!view)continue;
     const parentNode=view.node.parentElement;
     if(!parents.has(parentNode))parents.set(parentNode,parentNode.getBoundingClientRect());
-    const parent=parents.get(parentNode),p={x:(parent.left-root.left)/z,y:(parent.top-root.top)/z,width:parent.width/z,height:parent.height/z},a=parseAnchor(c.properties.Anchor??5);
+    const parent=parents.get(parentNode),p={x:(parent.left-root.left)/scale.x,y:(parent.top-root.top)/scale.y,width:parent.width/scale.x,height:parent.height/scale.y},a=parseAnchor(c.properties.Anchor??5);
     for(const [edge,bit,x1,y1,x2,y2]of [['Top',1,r.x+r.width/2,p.y,r.x+r.width/2,r.y],['Bottom',2,r.x+r.width/2,r.y+r.height,r.x+r.width/2,p.y+p.height],['Left',4,p.x,r.y+r.height/2,r.x,r.y+r.height/2],['Right',8,r.x+r.width,r.y+r.height/2,p.x+p.width,r.y+r.height/2]])if(a&bit)nodes.push(el('i',{class:'designer-anchor-guide','data-anchor-edge':edge,'data-anchor-control':c.id,style:{left:Math.min(x1,x2)+'px',top:Math.min(y1,y2)+'px',width:Math.abs(x2-x1)+'px',height:Math.abs(y2-y1)+'px'}}));
   }
   return nodes;

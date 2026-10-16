@@ -1,0 +1,8 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {loadRuntimeDocument} from '../src/ide/runtime-document.js';
+const frame=()=>({isConnected:true,srcdoc:null,src:null,removeAttribute(name){delete this[name];}});
+test('presentation transform runs before opaque-origin srcdoc navigation',()=>{const f=frame();loadRuntimeDocument({transformRuntimeDocument:html=>html.replace('<html>','<html data-vb-dos="turbo">')},f,'<html></html>',{isCurrent:()=>true,onError:error=>{throw error;}});assert.equal(f.srcdoc,'<html data-vb-dos="turbo"></html>');});
+test('presentation transform runs before native CSP preparation without srcdoc fallback',async()=>{const f=frame();let received;await loadRuntimeDocument({transformRuntimeDocument:()=>'<html data-vb-dos="turbo">',runtimeDocumentLoader:html=>{received=html;return 'app://approved';}},f,'<html>',{isCurrent:()=>true,onError:error=>{throw error;}});assert.equal(received,'<html data-vb-dos="turbo">');assert.equal(f.src,'app://approved');assert.equal(f.srcdoc,undefined);});
+test('invalid transforms and exceptions cannot navigate',()=>{for(const transformRuntimeDocument of [()=>Promise.resolve('html'),()=>({}),()=>{throw Error('rejected');}]){const f=frame();let failed;loadRuntimeDocument({transformRuntimeDocument},f,'<html>',{isCurrent:()=>true,onError:e=>failed=e});assert.ok(failed);assert.equal(f.srcdoc,null);}});
+test('a transform that retires the session cannot navigate or report stale errors',()=>{const f=frame();let current=true;loadRuntimeDocument({transformRuntimeDocument:html=>{current=false;return html;}},f,'<html>',{isCurrent:()=>current,onError:()=>assert.fail('stale error')});assert.equal(f.srcdoc,null);});

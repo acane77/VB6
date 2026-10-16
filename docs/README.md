@@ -70,6 +70,7 @@ These guides describe the implemented system, not complete native VB6 parity.
   atomic property/collection editors, shared control capabilities and explicit boundaries.
 - [Browser control compatibility](CONTROLS-COMPATIBILITY.md): collection ordering, selection identity, keyboard behavior and explicit native-control boundaries.
 
+- [Optional DOS / TUI workspace](DOS-WORKSPACE.md): shared VB6 cell presentation, palette settings, input ownership and visual-fidelity boundaries.
 - [Optional Figma workspace](figma-workspace.md): real VB6 Assets/Layers/Design,
   reversible workspace profiles, canvas navigation, auto layout and anchoring.
 - [Figma paint publication](figma-presentation.md): retained-renderer transactions,
@@ -193,6 +194,8 @@ No proprietary fonts, icons or runtime binaries are redistributed.
 - Microsoft, Visual Basic 6.0 Resource Center: https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-basic-6/visual-basic-6.0-documentation
 
 ## Intelligent UI
+
+[Coding-agent task workflows](CODING-AGENT-WORKFLOWS.md) covers task management, review/apply, cancellation and recovery.
 
 [INTELLIGENT-UI.md](INTELLIGENT-UI.md) documents the reusable streaming UI library,
 MCP tools and App resource, coding-agent conversation rendering, permission

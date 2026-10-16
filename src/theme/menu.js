@@ -1,3 +1,4 @@
+import {bindPresentationPortal} from '../rendering/presentation-portals.js';
 import {bindApplicationTheme} from './application-appearance.js';
 /** Shared IDE/runtime popup menus: one session, a retained submenu stack, no leaked listeners. */
 import {uiDocument} from '../core/window-context.js';
@@ -45,7 +46,7 @@ class MenuSession {
       node.append(row);
     }
     node.addEventListener('keydown',e=>this.keydown(state,e));
-    this.document.body.append(node);this.stack.push(state);
+    this.document.body.append(node);state.releasePresentation=bindPresentationPortal(this.options.opener||this.previous,node);this.stack.push(state);
     const width=node.offsetWidth,height=node.offsetHeight;
     if(parent&&x+width>this.view.innerWidth-2)x=parent.row.getBoundingClientRect().left-width+2;
     node.style.left=Math.round(Math.max(2,Math.min(x,this.view.innerWidth-width-2)))+'px';
@@ -53,7 +54,7 @@ class MenuSession {
     if(!parent){node.focus({preventScroll:true});if(this.options.focusFirst)this.select(state,this.next(state,-1,1),true);}
     return state;
   }
-  trim(depth){clearTimeout(this.timer);while(this.stack.length>depth){const state=this.stack.pop();state.parent?.row.setAttribute('aria-expanded','false');state.releaseTheme?.();state.node.remove();}}
+  trim(depth){clearTimeout(this.timer);while(this.stack.length>depth){const state=this.stack.pop();state.parent?.row.setAttribute('aria-expanded','false');state.releasePresentation?.();state.releaseTheme?.();state.node.remove();}}
   next(state,index,direction){const n=state.rows.length;for(let i=0;i<n;i++){index=(index+direction+n)%n;if(state.rows[index].enabled)return index;}return -1;}
   select(state,index,focus){state.selected=index;state.rows.forEach((entry,i)=>entry.row.classList.toggle('menu-selected',i===index));if(focus)state.rows[index]?.row.focus({preventScroll:true});state.rows[index]?.row.scrollIntoView({block:'nearest'});}
   submenu(state,entry,focus){

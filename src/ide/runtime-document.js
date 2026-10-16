@@ -17,6 +17,11 @@ export function loadRuntimeDocument(ide, frame, html, {isCurrent, onError}) {
   const current = () => requests.get(frame) === request && frame.isConnected && isCurrent();
   const failed = error => { if (current()) onError(error); };
   try {
+    // Trusted synchronous presentation extension, before either navigation path.
+    // It cannot weaken the frame's sandbox or override the native host's CSP.
+    if (typeof ide.transformRuntimeDocument === 'function') html = ide.transformRuntimeDocument(html);
+    if (typeof html !== 'string') throw new TypeError('Runtime document transform must return HTML text');
+    if (!current()) return;
     if (typeof ide.runtimeDocumentLoader !== 'function') {
       frame.srcdoc = html;
       return;
