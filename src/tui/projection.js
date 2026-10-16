@@ -1,3 +1,4 @@
+import {readControlPaintProperties} from '../rendering/invalidation.js';
 const CONTROL = '.vb-control,.vb-form';
 const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const owned = (node, selector) => [...node.querySelectorAll(selector)].filter(child => child.closest(CONTROL) === node);
@@ -36,6 +37,7 @@ function visibleRect(element, limit) {
  * targets; names, VB6 properties and event dispatch never flow in reverse. */
 export function captureControl(node, columns, rows, metrics) {
   const type = node.dataset.type || '';
+  const props = readControlPaintProperties(node, ['Caption','Alignment','Shape','FillStyle','FillColor','BorderStyle','BorderColor','BorderWidth','Default','Style','Orientation','Min','Max','Value','Enabled']);
   const input = owned(node, 'input,textarea,select,[contenteditable]')[0];
   const grid = projectionGrid(node, columns, rows, metrics);
   const style = node.ownerDocument.defaultView.getComputedStyle(node);
@@ -43,20 +45,26 @@ export function captureControl(node, columns, rows, metrics) {
   const caption = captionElement?.textContent || node.getAttribute('aria-label') || node.dataset.control || '';
   const value = input?.value ?? input?.textContent ?? '';
   const state = {
-    type, mnemonics: false, name: node.dataset.control || type, caption,
+    type, mnemonics: Object.hasOwn(props,'Caption'), name: node.dataset.control || type, caption: props.Caption ?? caption,
+    cellAspect:(metrics?.cellHeight||16)/(metrics?.cellWidth||8),shape: props.Shape, fillStyle: props.FillStyle, fillColor: props.FillColor, borderStyle: props.BorderStyle, borderColor: props.BorderColor, borderWidth: props.BorderWidth, defaultButton: !!props.Default,
     text: String(value), checked: !!input?.checked, indeterminate: !!input?.indeterminate,
     password: input?.type === 'password',
-    disabled: node.classList.contains('disabled') || !!input?.disabled,
+    disabled: !!node.closest('.disabled,[aria-disabled=true],[inert]') || !!input?.disabled || props.Enabled===0,
     focused: node.contains(node.ownerDocument.activeElement), pressed: node.matches(':active'),
     min: finite(input?.min), max: finite(input?.max, 100), value: finite(input?.value),
     vertical: type === 'VScrollBar' || input?.getAttribute('aria-orientation') === 'vertical' ||
       input?.classList.contains('vb-vrange'),
     alignment: style.textAlign === 'right' ? 'right' : style.textAlign === 'center' ? 'center' : 'left',
     scrollColumn: Math.max(0, Math.floor((input?.scrollLeft || 0) / (metrics?.cellWidth || 8))),
+    selectionStart: input?.selectionStart??0,selectionEnd:input?.selectionEnd??0,selectionDirection:input?.selectionDirection||'none',
+    readOnly:!!input?.readOnly,wrap:input?.tagName==='TEXTAREA'&&input.wrap!=='off',
     scrollRow: Math.max(0, Math.floor((input?.scrollTop || 0) / (metrics?.cellHeight || 16))),
     rows: []
   };
-  if (type === 'Label') state.caption = node.textContent;
+  if(type==='ComboBox'){state.simple=node.classList.contains('simple');state.inputHeight=input?Math.max(1,grid.project(input.getBoundingClientRect()).height):1;}
+  if(type==='RichTextBox')state.text=owned(node,'.vb-rich-paragraph').map(p=>p.textContent||'').join('\r\n');
+  if (type === 'Label' && !Object.hasOwn(props,'Caption')) state.caption = node.textContent;
+  if (Object.hasOwn(props,'Alignment')) state.alignment=['left','right','center'][Number(props.Alignment)]||'left';
   if (type === 'ProgressBar') {
     const fill = node.querySelector('.vb-progress-fill'), track = fill?.parentElement;
     state.min = 0; state.max = 100;
@@ -68,6 +76,8 @@ export function captureControl(node, columns, rows, metrics) {
     state.max = finite(range?.getAttribute('aria-valuemax'), 100);
     state.value = finite(range?.getAttribute('aria-valuenow'));
   }
+  if(['Slider','ProgressBar'].includes(type)&&Object.hasOwn(props,'Orientation')) state.vertical=Number(props.Orientation)===1;
+  if(['Slider','ProgressBar','HScrollBar','VScrollBar'].includes(type))for(const [key,name]of [['Min','min'],['Max','max'],['Value','value']])if(Object.hasOwn(props,key))state[name]=Number(props[key]);
   state.reverse = type === 'Slider' && state.vertical;
   const addRow = (element, text = element.textContent || '', selected = false, separator = false) => {
     const rect = visibleRect(element, grid.rect);
@@ -86,10 +96,12 @@ export function captureControl(node, columns, rows, metrics) {
     const selectors = type === 'Toolbar' || type === 'Data' || type === 'Adodc' || type === 'UpDown'
       ? 'button,.vb-data-label'
       : type === 'MonthView' ? '.vb-month-header>span,.vb-month-header>button,th,td'
+      : type === 'ComboBox' ? '.vb-combo-option'
       : type === 'ListView' ? '.vb-lv-row>div,.vb-lv-header>div'
       : 'td:not(.vb-grid-spacer),th,.vb-tree-row,.vb-status-panel,button[role=tab]';
     for (const element of owned(node, selectors)) {
       let text = element.textContent || '';
+      if(element.matches('.vb-spin-button'))text=node.classList.contains('horizontal')?(element.classList.contains('up')?'►':'◄'):(element.classList.contains('up')?'▲':'▼');
       const row = element.closest('.vb-lv-row') || element;
       if (element.classList.contains('vb-tree-row')) {
         text = ' '.repeat(Math.min(128, Math.max(0, finite(element.getAttribute('aria-level'), 1) - 1) * 2)) +

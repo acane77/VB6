@@ -1,3 +1,6 @@
+import {roundedRadii, preserveRoundedCorners} from './rounded-corners.js';
+import {nativePaintBounds, nativeTextBounds} from './paint-bounds.js';
+import {FONT_STYLE_KEYS, normalizeTextRun} from './text-style.js';
 import {PaintScene, parseColor, splitCSS} from './scene.js';
 import {intersect} from './policy.js';
 import {solidBackgroundLayers, paintBackgroundLayers, preserveBackgroundEdges} from './background.js';
@@ -7,7 +10,7 @@ const SKIP = new Set(['SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE',
 const NATIVE = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'IFRAME', 'VIDEO', 'AUDIO', 'CANVAS', 'SVG', 'IMG', 'OBJECT', 'EMBED', 'TABLE', 'METER', 'PROGRESS']);
 const rectOf = rect => [rect.left, rect.top, rect.width, rect.height];
 const number = value => Number.parseFloat(value) || 0;
-const STYLE_KEYS = ['color','display','visibility','position','zIndex','overflowX','overflowY','boxShadow','outlineWidth','outlineStyle','opacity','filter','backdropFilter','mixBlendMode','clipPath','maskImage','writingMode','transform','borderImageSource','backgroundColor','backgroundImage','backgroundSize','backgroundPosition','backgroundRepeat','backgroundOrigin','backgroundClip','direction','letterSpacing','textShadow','textDecorationLine','textOverflow','whiteSpace','contentVisibility', ...['Top','Right','Bottom','Left'].flatMap(s=>['Width','Style','Color'].map(p=>'border'+s+p)), ...['TopLeft','TopRight','BottomLeft','BottomRight'].map(s=>'border'+s+'Radius')];
+const STYLE_KEYS = ['color','display','visibility','position','zIndex','overflowX','overflowY','boxShadow','outlineWidth','outlineStyle','outlineOffset','opacity','filter','backdropFilter','mixBlendMode','clipPath','maskImage','writingMode','transform','borderImageSource','backgroundColor','backgroundImage','backgroundSize','backgroundPosition','backgroundRepeat','backgroundOrigin','backgroundClip','direction','letterSpacing','textShadow','textDecorationLine','textOverflow','whiteSpace','contentVisibility', ...['Top','Right','Bottom','Left'].flatMap(s=>['Width','Style','Color'].map(p=>'border'+s+p)), ...['TopLeft','TopRight','BottomLeft','BottomRight'].map(s=>'border'+s+'Radius')];
 // The first direct summary is the only painted child of closed <details>.
 // Hidden disclosure content can still return nonzero DOM/Range rectangles;
 // measuring it can even force layout. Never infer paint visibility from those
@@ -50,6 +53,7 @@ export class DOMScene {
     if (backdrop.native) scene.native(scene.clip, scene.clip, 'native canvas background');
     else scene.add(scene.clip, backdrop.color);
     this.element(this.document.body, scene.clip, 0);
+    this.atlas.end?.();
     return scene;
   }
   // One border-box/layout metric read per element per build. Read all required
@@ -85,7 +89,7 @@ export class DOMScene {
     // Only atlas-eligible text needs these properties; cache them with its style.
     if (style.font === undefined) {
       const computed = this.view.getComputedStyle(node);
-      for (const key of ['font','fontWeight','fontSize','fontFamily','fontKerning']) style[key] = computed[key];
+      for (const key of FONT_STYLE_KEYS) style[key] = computed[key];
     }
     return style;
   }
@@ -99,7 +103,20 @@ export class DOMScene {
   }
   native(node, rect, clip, reason) {
     // Shadows/outlines and descendants can extend beyond a native element's border box.
-    const style = this.style(node); let [x, y, w, h] = rect, right = x + w, bottom = y + h;
+    const style = this.style(node);
+    const bounds = (element, r, paint) => {
+      // Rotations/perspective can move filters, descendants and outlines outside
+      // an axis-aligned border box. Preserve the enclosing clip, not a guessed halo.
+      if (paint.transform && paint.transform !== 'none') {
+        const m = new this.view.DOMMatrixReadOnly(paint.transform);
+        if (!m.is2D || m.b || m.c || m.a <= 0 || m.d <= 0) return [...clip];
+      }
+      // Border-box ratios include positive scales inherited from ancestors;
+      // the element's own computed transform alone does not include those.
+      const box = this.box(element);
+      return nativePaintBounds(r, paint, clip, box.width ? r[2] / box.width : 1, box.height ? r[3] / box.height : 1);
+    };
+    let [x, y, w, h] = bounds(node, rect, style), right = x + w, bottom = y + h;
     if (!NATIVE.has(node.tagName.toUpperCase()) && style.contentVisibility !== 'hidden' && (style.overflowX === 'visible' || style.overflowY === 'visible')) {
       // Walk the paint tree, not querySelectorAll: a rounded/themed ancestor
       // must not reveal hidden tool results or clear unrelated GPU text. Keep
@@ -116,12 +133,15 @@ export class DOMScene {
         const childStyle = this.style(child);
         if (childStyle.display === 'none') continue;
         const r = this.rect(child);
-        if (r[2] && r[3]) { x = Math.min(x, r[0]); y = Math.min(y, r[1]); right = Math.max(right, r[0] + r[2]); bottom = Math.max(bottom, r[1] + r[3]); }
+        if (r[2] && r[3] && childStyle.visibility !== 'hidden' && childStyle.visibility !== 'collapse') {
+          const painted = bounds(child, r, childStyle);
+          x = Math.min(x, painted[0]); y = Math.min(y, painted[1]);
+          right = Math.max(right, painted[0] + painted[2]); bottom = Math.max(bottom, painted[1] + painted[3]);
+        }
         if (childStyle.contentVisibility !== 'hidden') pending.push(paintedChildren(child)[Symbol.iterator]());
       }
     }
-    const pad = style.boxShadow !== 'none' || number(style.outlineWidth) ? 4 : 1;
-    this.scene.native([x - pad, y - pad, right - x + pad * 2, bottom - y + pad * 2], clip, reason);
+    this.scene.native([x, y, right - x, bottom - y], clip, reason);
   }
   unsupported(node, style) {
     // Preserve the browser's disclosure marker (including its open state) and
@@ -129,6 +149,7 @@ export class DOMScene {
     // small native island is needed; opened result bodies still use GPU paint.
     if ((node.tagName === 'SUMMARY' && node.parentElement?.tagName === 'DETAILS' && summaryOf(node.parentElement) === node) ||
         (node.tagName === 'DETAILS' && !summaryOf(node))) return 'native disclosure summary';
+    if(node.matches('[data-tui-paint],[data-tui-chrome],[data-tui-chrome-target]'))return 'owned character-cell presentation';
     if (requiresNativeShadowPaint(node) || NATIVE.has(node.tagName.toUpperCase()) || node.isContentEditable || node.matches('[data-vb-native-render],.code-editor,.source-editor,.editor-container,.vb-richtext')) return 'native control, image or editor';
     if (number(style.opacity) !== 1 || style.filter !== 'none' || (style.backdropFilter && style.backdropFilter !== 'none') || style.mixBlendMode !== 'normal') return 'native compositing';
     if (style.clipPath !== 'none' || (style.maskImage && style.maskImage !== 'none') || style.writingMode !== 'horizontal-tb') return 'native clipping or writing mode';
@@ -136,7 +157,6 @@ export class DOMScene {
       const m = new this.view.DOMMatrixReadOnly(style.transform);
       if (!m.is2D || m.b || m.c || m.a <= 0 || m.d <= 0) return 'rotated or 3D transform';
     }
-    if (['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'].some(side => number(style['border' + side + 'Radius']) > 0)) return 'rounded border';
     if (style.borderImageSource !== 'none') return 'border image';
     if (style.outlineStyle !== 'none' && number(style.outlineWidth)) return 'native focus outline';
     for (const pseudo of ['::before', '::after']) {
@@ -162,8 +182,9 @@ export class DOMScene {
     }
     const box = this.box(node);
     const scaleX = box.width ? rect[2] / box.width : 1, scaleY = box.height ? rect[3] / box.height : 1;
-    let borders, shadows, background, gradient, layers, backgroundRects;
+    let borders, shadows, background, gradient, layers, backgroundRects, radii;
     try {
+      radii = roundedRadii(style, box.width || rect[2], box.height || rect[3], scaleX, scaleY);
       if (!style.paint) {
         const sourceBorders = ['Top', 'Right', 'Bottom', 'Left'].map(side => ({width: number(style['border' + side + 'Width']), style: style['border' + side + 'Style'], color: parseColor(style['border' + side + 'Color'])}));
         if (sourceBorders.some(b => b.width && !['solid', 'none', 'hidden'].includes(b.style))) throw new Error('non-solid border');
@@ -232,6 +253,13 @@ export class DOMScene {
       const sw = rect[2] - box.clientWidth * scaleX - l - r, sh = rect[3] - box.clientHeight * scaleY - t - b;
       if (box.clientWidth && sw > .5) this.scene.native([rect[0] + rect[2] - r - sw, rect[1] + t, sw, rect[3] - t - b], clip, 'scrollbar');
       if (box.clientHeight && sh > .5) this.scene.native([rect[0] + l, rect[1] + rect[3] - b - sh, rect[2] - l - r, sh], clip, 'scrollbar');
+      // Clear after descendants: a rounded overflow clip must not be refilled
+      // by a child's opaque quad. The DOM supplies exact curve coverage here.
+      if (preserveRoundedCorners(this.scene, rect, radii, clip, borders.map(edge => edge.width))) {
+        this.scene.stats.gpuRoundedBoxes = (this.scene.stats.gpuRoundedBoxes || 0) + 1;
+        for (const shadow of shadows) if (!shadow.inset) preserveRoundedCorners(this.scene,
+          [rect[0] + shadow.x * scaleX, rect[1] + shadow.y * scaleY, rect[2], rect[3]], radii, clip);
+      }
     }
   }
   children(node, clip, depth) {
@@ -268,17 +296,34 @@ export class DOMScene {
   text(node, clip) {
     const style = this.style(node.parentElement); if (style.visibility !== 'visible') return;
     const range = this.range; range.selectNodeContents(node);
-    const rectangles = [...range.getClientRects()].map(rectOf).filter(r => r[2] && r[3]);
+    const shadowed = style.textShadow && style.textShadow !== 'none';
+    let scaleX = 1, scaleY = 1;
+    if (shadowed) {
+      const box = this.box(node.parentElement);
+      scaleX = box.width ? box.rect[2] / box.width : 1; scaleY = box.height ? box.rect[3] / box.height : 1;
+    }
+    const coverage = rect => nativeTextBounds(rect, style, clip, scaleX, scaleY);
+    const rectangles = [...range.getClientRects()].map(rectOf).filter(rect => {
+      if (!rect[2] || !rect[3]) return false;
+      const r = shadowed ? coverage(rect) : rect;
+      return r[0] + r[2] + 2 > clip[0] && r[1] + r[3] + 2 > clip[1] &&
+        r[0] - 2 < clip[0] + clip[2] && r[1] - 2 < clip[1] + clip[3];
+    });
     if (!rectangles.length) return;
-    const native = this.policy.text !== 'gpu' || style.textShadow !== 'none' || style.textDecorationLine !== 'none' || style.direction !== 'ltr' || style.letterSpacing !== 'normal' || Math.abs((this.box(node.parentElement).rect[2] / (this.box(node.parentElement).width || 1)) - 1) > .01 || (this.selection?.rangeCount && this.selection.containsNode(node, true));
+    const native = this.policy.text !== 'gpu' || style.textShadow !== 'none' || style.textDecorationLine !== 'none' || style.direction !== 'ltr' || Math.abs((this.box(node.parentElement).rect[2] / (this.box(node.parentElement).width || 1)) - 1) > .01 || (this.selection?.rangeCount && this.selection.containsNode(node, true));
     if (native || rectangles.length !== 1 || style.textOverflow === 'ellipsis' || this.style(node.parentElement).transform !== 'none') {
-      for (const rect of rectangles) this.scene.native([rect[0] - 1, rect[1] - 1, rect[2] + 2, rect[3] + 2], clip, 'native text');
+      for (const rect of rectangles) this.scene.native(coverage(rect), clip, 'native text');
       this.scene.stats.nativeText++; return;
     }
-    const rect = rectangles[0]; let text = node.textContent;
-    if (!style.whiteSpace.startsWith('pre')) text = text.replace(/\s+/g, ' ');
-    const glyph = this.atlas.text(text, this.fontStyle(node.parentElement, style), rect, this.scene.dpr);
-    if (!glyph) { this.scene.native(rect, clip, 'text atlas capacity'); return; }
+    const rect = rectangles[0], text = normalizeTextRun(node.textContent, style.whiteSpace);
+    const glyph = text === null ? null : this.atlas.text(text, this.fontStyle(node.parentElement, style), rect, this.scene.dpr);
+    // Leading/trailing collapsed spaces, contextual inline shaping and language
+    // rules can change the DOM advance. Do not cover native glyphs with a run
+    // whose measured advance disagrees with the browser layout.
+    if (!glyph || (Number.isFinite(glyph.advance) && Math.abs(glyph.advance - rect[2]) > 1 / this.scene.dpr)) {
+      this.scene.native(coverage(rect), clip, 'native text style, layout or atlas capacity');
+      this.scene.stats.nativeText++; return;
+    }
     this.scene.add(glyph.rect, [1, 1, 1, 1], {clip, page: glyph.page, uv: glyph.uv, snap: false}); this.scene.stats.gpuText++;
   }
 }

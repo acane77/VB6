@@ -1,3 +1,4 @@
+import {letterformMask} from './letterforms.js';
 /** Independently authored integer-pixel line/block primitives on an 8x16 grid.
  * These are drawing algorithms, not an IBM/vendor font or a copied ROM atlas.
  * Letterforms outside this set deliberately use the browser text rasterizer. */
@@ -71,8 +72,8 @@ export function tuiGlyphMask(code) {
 
 /** Paint runs at integer device-pixel boundaries; no antialiasing, interpolation
  * or platform font fallback is involved in line and block cells. */
-export function paintTuiGlyph(context, code, width, height) {
-  const mask = masks.get(code);
+export function paintTuiGlyph(context, code, width, height, style=0) {
+  const mask = masks.get(code) || letterformMask(code);
   if (!mask) return false;
   for (let y = 0; y < 16; y++) {
     for (let x = 0; x < 8;) {
@@ -81,7 +82,7 @@ export function paintTuiGlyph(context, code, width, height) {
       while (x < 8 && mask[y * 8 + x]) x++;
       const left = Math.round(start * width / 8), top = Math.round(y * height / 16);
       const right = Math.round(x * width / 8), bottom = Math.round((y + 1) * height / 16);
-      if (right > left && bottom > top) context.fillRect(left, top, right - left, bottom - top);
+      if (right > left && bottom > top) context.fillRect(Math.max(0,left+(style&2?Math.round((8-y)*width/64):0)), top, Math.min(width-left,right-left+(style&1?1:0)), bottom-top);
     }
   }
   return true;

@@ -1,26 +1,45 @@
 import {assertData,DATA_LIMITS,resultFromRows,sameValue,pathValue} from './common.js';
 import {fieldValue} from './recordset.js';
 
+// Count UTF-8 without allocating a second encoded copy. Isolated UTF-16
+// surrogates become the three-byte replacement character, as in TextEncoder.
+function textBytes(text,limit=DATA_LIMITS.bytes){
+  let bytes=0;assertData(text.length<=limit,'CSV file is too large',7);
+  for(const character of text){const code=character.codePointAt(0);bytes+=code<128?1:code<2048?2:code<65536?3:4;assertData(bytes<=limit,'CSV file is too large',7);}
+  return bytes;
+}
+function validateHeaders(headers){
+  assertData(headers.length>0&&headers.length<=1024,'CSV column limit exceeded',7);
+  assertData(headers.every(name=>typeof name==='string'&&name)&&new Set(headers.map(name=>name.toLowerCase())).size===headers.length,'CSV headers must be nonempty and unique');
+}
 export function parseCSV(text){
-  text=String(text).replace(/^\uFEFF/,'');assertData(text.length<=DATA_LIMITS.bytes,'CSV file is too large',7);
-  const records=[];let row=[],value='',quoted=false,closed=false;
+  text=String(text).replace(/^\uFEFF/,'');textBytes(text);
+  const records=[];let row=[],value='',quoted=false,closed=false,cells=0;
+  const cell=()=>{assertData(row.length<1024,'CSV column limit exceeded',7);if(records.length)assertData(++cells<=DATA_LIMITS.cells,'CSV cell limit exceeded',7);row.push(value);value='';closed=false;};
+  const record=()=>{cell();if(!records.length)validateHeaders(row);else{assertData(records.length<=DATA_LIMITS.rows,'CSV row limit exceeded',7);assertData(row.length===records[0].length,'CSV records have inconsistent column counts');}records.push(row);row=[];};
   for(let i=0;i<text.length;i++){
     const ch=text[i];
     if(quoted){if(ch==='"'){if(text[i+1]==='"'){value+='"';i++;}else{quoted=false;closed=true;}}else value+=ch;continue;}
     if(ch==='"'){assertData(!value&&!closed,'Unexpected quote in CSV');quoted=true;}
-    else if(ch===','){row.push(value);value='';closed=false;}
-    else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&text[i+1]==='\n')i++;row.push(value);records.push(row);row=[];value='';closed=false;assertData(records.length<=DATA_LIMITS.rows+1,'CSV row limit exceeded',7);}
+    else if(ch===',')cell();
+    else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&text[i+1]==='\n')i++;record();}
     else{assertData(!closed,'Unexpected characters after a quoted CSV field');value+=ch;}
   }
-  assertData(!quoted,'Unterminated CSV field');if(value||row.length||closed){row.push(value);records.push(row);}
+  assertData(!quoted,'Unterminated CSV field');if(value||row.length||closed)record();
   if(!records.length)return [];
-  const headers=records.shift();assertData(headers.every(Boolean)&&new Set(headers.map(v=>v.toLowerCase())).size===headers.length,'CSV headers must be nonempty and unique');
-  assertData(headers.length<=1024&&records.length*headers.length<=DATA_LIMITS.cells,'CSV allocation limit exceeded',7);
-  return records.map(row=>{assertData(row.length===headers.length,'CSV records have inconsistent column counts');return Object.fromEntries(headers.map((key,i)=>[key,row[i]]));});
+  const headers=records.shift();return records.map(row=>Object.fromEntries(headers.map((key,i)=>[key,row[i]])));
 }
 export function writeCSV(rows,headers){
-  headers ||= Object.keys(rows[0]||{});const quote=value=>'"'+String(value??'').replace(/"/g,'""')+'"';
-  return [headers,...rows.map(row=>headers.map(key=>row[key]))].map(row=>row.map(quote).join(',')).join('\r\n')+'\r\n';
+  assertData(Array.isArray(rows),'CSV rows must be an array',13);headers??=Object.keys(rows[0]||{});
+  assertData(Array.isArray(headers),'CSV headers must be an array',13);
+  if(!headers.length&&!rows.length)return '';
+  validateHeaders(headers);assertData(rows.length<=DATA_LIMITS.rows&&rows.length*headers.length<=DATA_LIMITS.cells,'CSV allocation limit exceeded',7);
+  const parts=[];let bytes=0;
+  const quote=value=>{const text=String(value??'');let size=textBytes(text);for(const ch of text)if(ch==='"')size++;bytes+=size+2;assertData(bytes<=DATA_LIMITS.bytes,'CSV file is too large',7);return '"'+text.replace(/"/g,'""')+'"';};
+  const append=values=>{bytes+=Math.max(0,headers.length-1)+2;assertData(bytes<=DATA_LIMITS.bytes,'CSV file is too large',7);parts.push(values.map(quote).join(',')+'\r\n');};
+  append(headers);
+  for(const row of rows){assertData(row&&typeof row==='object'&&!Array.isArray(row),'CSV rows must be objects',13);append(headers.map(key=>row[key]));}
+  return parts.join('');
 }
 export class FileDataProvider {
   constructor(context,config){this.context=context;this.config=config;}

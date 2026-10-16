@@ -56,6 +56,8 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [Native project interchange](NATIVE-PROJECTS.md) and
   [workspace, save recovery and interoperability](NATIVE-WORKSPACE-INTEROP.md).
 - [Data sources](DATA-SOURCES.md): providers, binding, credentials and deployment.
+- [Data client capabilities](DATA-CLIENT-CAPABILITIES.md): ADO/DAO/RDO cursor,
+  schema, ownership and binary-value contracts, with explicit native-provider limits.
 - [HTML5 WebBrowser](WEBBROWSER.md): classic navigation/events, isolated DOM automation,
   designer integration, HTML exports and native compatibility boundaries.
 - [Common Automation](COMMON-AUTOMATION.md): HTTP/XML/ADO stream objects, shared data
@@ -86,10 +88,14 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [HTML retention and designer measurements](HTML-RENDERING-PERFORMANCE.md): DOM identity, read-before-write batching and browser validation.
 - [UI rendering backends](RENDERING.md): settings, native islands, lifecycle,
   performance measurement and strict acceptance; [rendering source attribution](RENDERING-SOURCES.md).
+- [Rendering resource contracts](RENDERING-RESOURCES.md): atlas lifetime, partial uploads,
+  rounded paint, text fidelity, suspension and exact browser qualification.
 - [GPU startup and recovery](RENDERING-TROUBLESHOOTING.md): adapter/context failures,
   live diagnostics, saved-policy retry and environment limitations.
 - [IDE themes](IDE-THEMES.md), [application themes](APPLICATION-THEMES.md) and
   [matching icon packs](THEME-ICON-PACKS.md).
+- [Theme lifecycle and environment](THEME-LIFECYCLE.md): bounded media-query
+  observation, theme mutation events and visual-viewport-aware popup placement.
 - [macOS 26 visual fidelity](MACOS-THEME-FIDELITY.md): component states, native references,
   authored-layout preservation and measured comparison boundaries.
 
@@ -138,7 +144,8 @@ These guides describe the implemented system, not complete native VB6 parity.
 
 - [Coding-agent setup and APIs](coding-agents.md), [permissions](CODING-AGENT-PERMISSIONS.md),
   [conversation/session budgets](CODING-AGENT-THREADS.md),
-  [error recovery and compaction](CODING-AGENT-RECOVERY.md) and
+  [error recovery and compaction](CODING-AGENT-RECOVERY.md),
+  [task workflows](CODING-AGENT-WORKFLOWS.md) and
   [change review/workbench](CODING-AGENT-WORKBENCH.md).
 - [ChatGPT account setup](CHATGPT-LOGIN.md) and [sign-in troubleshooting](CHATGPT-SIGNIN-TROUBLESHOOTING.md).
 - [MCP server setup and security](MCP.md) and [agent tool reference](MCP-AGENTS.md).

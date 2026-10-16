@@ -1,4 +1,4 @@
-import {notifyControlPaint} from '../rendering/invalidation.js';
+import {notifyControlPaint,bindControlPaintProperties} from '../rendering/invalidation.js';
 import {controlSize,controlSystem,graphicsProperty,drawControl,printControl,measureControl,scaleControl,scaleLength,paintControlPicture} from '../graphics/control-graphics.js';
 import {finite} from '../graphics/contract.js';
 import {applyRangeOrientation,handleRangeEndpointKey} from './range-orientation.js';
@@ -53,6 +53,7 @@ export class BrowserControl {
       this.SuspendLayout=()=>this.form?.layoutController?.suspend();
       this.ResumeLayout=(perform=true)=>this.form?.layoutController?.resume(perform);
     }
+    this.releasePaintProperties=bindControlPaintProperties(this.node,()=>this.props);
     this.build();this.attachEvents();this.refresh();
     if(!this.design&&this.vm?.win32){
       Object.defineProperty(this,'hWnd',{enumerable:true,value:this.vm.win32.registerControl(this)});
@@ -250,7 +251,7 @@ export class BrowserControl {
       this._recordset=rs;
       for(const control of this.form?.controls||[])if(control._dataSource===this)control.bindRecordset(this);
     }});
-    this.dataLabel=el('span',{style:{flex:'1',textAlign:'center'}});this.node.classList.add('vb-toolbar');
+    this.dataLabel=el('span',{class:'vb-data-label',style:{flex:'1',textAlign:'center'}});this.node.classList.add('vb-toolbar');
     for(const [caption,action]of [['|◀','MoveFirst'],['◀','MovePrevious'],['▶','MoveNext'],['▶|','MoveLast']]){
       const button=el('button',{text:caption,'aria-label':action,onclick:async()=>{try{await this.Recordset[action]();await this.event('Reposition');}catch(error){this.LastDataError=error.message;this.node.title=error.message;}}});
       this.node.append(button);if(action==='MovePrevious')this.node.append(this.dataLabel);
@@ -311,7 +312,7 @@ export class BrowserControl {
   async ShowOpen(){const result=await this.vm?.host.openFile?.(this.props);if(!result){if(this.props.CancelError)throw new VBError('Cancel was selected',32755);return;}this.props.FileName=result.name;if(result.bytes)this.vm.fs.writeBytes(result.name,result.bytes);else this.vm.fs.write(result.name,result.text);}
   async ShowSave(){const name=await this.vm?.host.inputBox?.('File name:',this.props.DialogTitle||'Save As',this.props.FileName||'Untitled.txt');if(!name){if(this.props.CancelError)throw new VBError('Cancel was selected',32755);return;}this.props.FileName=name;this.vm?.host.saveFile?.(name,this.vm.fs.exists(name)?this.vm.fs.readBytes(name):'');}
   async ShowColor(){const value=await this.vm?.host.inputBox?.('Color as #RRGGBB:','Color',oleColor(this.props.Color||0));if(/^#[0-9a-f]{6}$/i.test(value)){this.Color=parseInt(value.slice(1,3),16)+(parseInt(value.slice(3,5),16)<<8)+(parseInt(value.slice(5,7),16)<<16);}}
-  dispose(){unbindTabChild(this);this.vm?.win32?.unregisterControl(this.hWnd);this._unsubscribeData?.();this._unsubscribeData=null;this.gridEditor=null;this.disposed=true;cancelAnimationFrame(this.raf);clearInterval(this.timerId);this.surface?.dispose();this.rich?.dispose();this.scrollbar?.dispose();this.combo?.dispose();this.stepper?.dispose();this.node.remove();}
+  dispose(){this.releasePaintProperties?.();this.releasePaintProperties=null;unbindTabChild(this);this.vm?.win32?.unregisterControl(this.hWnd);this._unsubscribeData?.();this._unsubscribeData=null;this.gridEditor=null;this.disposed=true;cancelAnimationFrame(this.raf);clearInterval(this.timerId);this.surface?.dispose();this.rich?.dispose();this.scrollbar?.dispose();this.combo?.dispose();this.stepper?.dispose();this.node.remove();}
   buildTree(){this.node.classList.add('vb-tree');this.viewport=el('div',{class:'vb-virtual-viewport',role:'tree',tabindex:0});this.spacer=el('div',{class:'vb-virtual-spacer'});this.viewport.append(this.spacer);this.node.append(this.viewport);this._selectedNode=null;this.Nodes=new TreeNodes(()=>this.invalidate(),item=>{this._selectedNode=item;this.invalidate();});this.viewport.addEventListener('scroll',()=>this.paintTreeRows());this.viewport.addEventListener('keydown',e=>{const rows=this.treeRows||[];let i=rows.findIndex(r=>r.node===this._selectedNode);if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();i=Math.max(0,Math.min(rows.length-1,i+(e.key==='ArrowDown'?1:-1)));if(rows[i]){this._selectedNode=rows[i].node;this.viewport.scrollTop=Math.max(0,i*20-this.viewport.clientHeight/2);this.paintTreeRows();this.event('NodeClick',[this._selectedNode]);}}else if(e.key==='ArrowRight'&&this._selectedNode){this._selectedNode.Expanded=-1;}else if(e.key==='ArrowLeft'&&this._selectedNode){this._selectedNode.Expanded=0;}});for(const item of this.props.Nodes||[]){const node=this.Nodes.Add(undefined,0,item.Key,item.Text,item.Image,item.SelectedImage);node.Expanded=item.Expanded??-1;}const keys=new Map(this.Nodes.items.filter(n=>n.Key).map(n=>[lower(n.Key),n]));for(let i=0;i<this.Nodes.items.length;i++){const key=this.props.Nodes[i].Parent;if(key)this.Nodes.items[i].Parent=keys.get(lower(key))||null;}}
   get SelectedItem(){if(this.type==='TreeView')return this._selectedNode;if(this.type==='ListView')return this._selectedItem;if(this.type==='TabStrip')return this.Tabs.items[this.props.Tab||0]||null;return null;}
   set SelectedItem(item){if(this.type==='TreeView')this._selectedNode=item;else if(this.type==='ListView')this._selectedItem=item;else if(this.type==='TabStrip')this.set('Tab',this.Tabs.items.indexOf(item));this.invalidate();}

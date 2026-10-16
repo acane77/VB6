@@ -45,7 +45,8 @@ test('block and shade densities are exact and independent of a system font', () 
   for (const char of ['▀', '▄', '▌', '▐', '▒']) assert.equal(count(char), 64);
   assert.equal(count('░'), 32); assert.equal(count('▓'), 96);
   assert.equal(tuiGlyphMask('A'), null);
-  assert.equal(paintTuiGlyph({}, 'A'.codePointAt(0), 8, 16), false);
+  assert.equal(paintTuiGlyph({}, '😀'.codePointAt(0), 8, 16), false);
+  let pixels=0;assert.equal(paintTuiGlyph({fillRect(){pixels++;}}, 'A'.codePointAt(0), 8, 16), true);assert.ok(pixels>0);
 });
 
 test('fractional DPR uses rounded absolute edges without accumulating per-cell drift', () => {

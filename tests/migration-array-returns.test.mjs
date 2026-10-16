@@ -13,6 +13,8 @@ for(const codeStyle of ['native','compatibility'])test(codeStyle+': typed array 
   assert.match(source,/Dim __vbResult As VbArray\(Of Integer\) = New VbArray\(Of Integer\)\(\)/);
   assert.match(source,/__vbResult.Resize\(VbArrayBounds.FromPairs\(CInt\(4S\), CInt\(5S\)\), False\)/);
   assert.match(source,/Private Function __vbCallOrder\d+\([^\n]+As VbArray\(Of Integer\)/);
+  assert.match(source,/Dim __vbRecord\d+ As (?:Entry|\[Entry\]) = __vbArray\d+\(__vbIndex\d+\)/);
+  assert.match(source,/(?:__vbRecord\d+|\[__vbRecord\d+\])\.(?:Name|\[Name\]) = "owned"[\s\S]+__vbArray\d+\(__vbIndex\d+\) = __vbRecord\d+/);
   assert.match(source,/Function \[?OptionalValues\]?\(\) As VbArray\(Of Integer\)/);
   assert.match(r.files['Application/ArrayContract.vb'],/ReadOnly Property \[?Values\]? As VbArray\(Of Integer\)/);
   assert.match(r.files['Application/ArrayImplementation.vb'],/As VbArray\(Of Integer\) Implements \[?IArrayContract\]?\.\[?Values\]?/);

@@ -7,7 +7,7 @@ Without required backends, unavailable APIs are explicitly skipped. Reports dist
 pixel parity with our HTML path, CPU timing and physical-hardware qualification.
 """
 from __future__ import annotations
-import argparse, base64, functools, http.server, io, json, os, platform, shlex, shutil, subprocess, threading, time, traceback
+import argparse, base64, functools, http.server, io, json, os, platform, shutil, subprocess, threading, time, traceback
 from pathlib import Path
 from PIL import Image, ImageChops
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -75,16 +75,10 @@ with sync_playwright() as playwright:
     executable = os.environ.get('CHROMIUM_PATH') or shutil.which('chromium') or playwright.chromium.executable_path
     # Browser flags belong to this test runner, never the shipped IDE/runtime.
     # Source: https://developer.chrome.com/blog/supercharge-web-ai-testing
-    launch_flags = ['--no-sandbox']
-    if args.software_gpu:
-        # Full native raster/compositor completion is a screenshot precondition:
-        # partial-raster tile reuse can change fractional HTML edge coverage even
-        # with the overlay removed. Do not mask those pixels or widen tolerances.
-        # These oracle switches apply ONLY to the explicit software test profile,
-        # never the shipped application or the default hardware measurement path.
-        # Source: https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md#rendering--gpu
-        launch_flags += ['--enable-unsafe-webgpu', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--use-vulkan=swiftshader', '--disable-partial-raster', '--run-all-compositor-stages-before-draw']
-    launch_flags += shlex.split(os.environ.get('RENDERING_BROWSER_FLAGS', ''))
+    # Full native raster/compositor completion is a screenshot precondition.
+    # This audited profile is shared with every required-GPU acceptance runner,
+    # so a secondary suite cannot silently launch a weaker browser configuration.
+    launch_flags = rendering_launch_flags(software_gpu=args.software_gpu)
     # Playwright's headless profile adds --hide-scrollbars. Remove only that
     # presentation shortcut: native scrollbar geometry and input must be tested
     # in BOTH modes, rather than passing pixels with all scrollbars absent.

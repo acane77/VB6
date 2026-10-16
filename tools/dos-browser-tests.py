@@ -10,6 +10,9 @@ import os
 import threading
 from playwright.sync_api import sync_playwright, expect
 from dos_runtime_checks import run_runtime_checks
+from dos_boundary_checks import run_boundary_checks
+from dos_extended_checks import run_extended_checks
+from dos_fidelity_checks import run_fidelity_checks
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = os.environ.get('VB6_BROWSER', 'chromium')
@@ -42,6 +45,7 @@ try:
     page.wait_for_function('window.vb6Studio?.dosMode')
     page.evaluate('''() => {
       const api=VB6StudioAPI,ide=vb6Studio,p=api.newProject('DOSFixture'),m=p.modules[0];
+      m.bookmarks=[]; // SourceEditor initializes the same empty bookmark collection on first open.
       m.form.properties.ClientWidth=12000;m.form.properties.ClientHeight=10500;
       const types=['Label','TextBox','CommandButton','CheckBox','OptionButton','ComboBox','ListBox','HScrollBar','VScrollBar','Timer','DriveListBox','DirListBox','FileListBox','Shape','Line','Data','TreeView','ListView','ProgressBar','Slider','StatusBar','Toolbar','RichTextBox','MSFlexGrid','MSHFlexGrid','DataGrid','DTPicker','MonthView','UpDown','ImageList','CommonDialog','Adodc','Frame','PictureBox','TabStrip','SSTab','Image','MSChart','OLE','WebBrowser'];
       for(let i=0;i<types.length;i++){const type=types[i],c=api.createControl(type,type+'Test',150+(i%5)*2300,150+Math.floor(i/5)*1200);c.properties.Width=2100;c.properties.Height=1050;
@@ -84,13 +88,66 @@ try:
     page.evaluate("vb6Studio.dosMode.configure({mode:'dos',profile:'turbo'})")
     assert not page.evaluate('vb6Studio.figmaMode.enabled')
     assert page.evaluate('JSON.stringify(vb6Studio.project)===dosBaseline')
+    # The code editor keeps its original virtual-input geometry and history.
+    page.evaluate("vb6Studio.command('viewCode')")
+    page.wait_for_function("vb6Studio.editor.syntax.querySelector('.vb-tui-chrome-surface')")
+    page.evaluate("window.dosSourceInput=vb6Studio.editor.input;window.dosSourceBefore=vb6Studio.editor.input.value")
+    source = page.locator('textarea.source-input[data-active-editor="true"]')
+    source.focus()
+    source.press('Control+Home')
+    source.press('Shift+ArrowRight')
+    page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+    assert page.evaluate("(() => {const r=vb6Studio.dosMode.sessions.get(document),entry=r.chrome.entries.get(vb6Studio.editor.syntax);return entry.source&&entry.buffer.toText().includes('Option')&&Math.abs(entry.painter.cellWidth-vb6Studio.editor.characterWidth)<0.1;})()")
+    assert page.evaluate("vb6Studio.editor.input===dosSourceInput&&vb6Studio.editor.input.selectionEnd-vb6Studio.editor.input.selectionStart===1")
+    source.press('End')
+    source.press('Space')
+    page.wait_for_function('vb6Studio.editor.input.value!==dosSourceBefore')
+    page.evaluate("vb6Studio.command('undo')")
+    page.wait_for_function('vb6Studio.editor.input.value===dosSourceBefore')
+    assert page.evaluate('JSON.stringify(vb6Studio.project)===dosBaseline')
+    gutter = page.locator('.source-editor:visible .gutter-line[data-line="3"]')
+    gutter.click()
+    page.wait_for_function('vb6Studio.breakpoints.some(b=>b.line===3)')
+    page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+    assert page.evaluate("vb6Studio.dosMode.sessions.get(document).chrome.entries.get(vb6Studio.editor.gutter).buffer.toText().includes('•')")
+    page.screenshot(path=str(REPORT / 'source-editor.png'), full_page=True)
+    gutter.click()
+    page.wait_for_function('!vb6Studio.breakpoints.some(b=>b.line===3)')
+    results['source_editor'] = {'identity': True, 'native_pitch': True, 'selection': True, 'undo': True, 'breakpoint': True}
+    # Exercise the actual command/download path, not just the serializers.
+    results['downloads'] = []
+    for command, suffix in [('dosExportJSON','.json'),('dosExportANSI','.ans'),('dosExportText','.txt'),('dosExportB800','.b800')]:
+        with page.expect_download() as event:
+            page.evaluate('(command)=>vb6Studio.command(command)', command)
+        download = event.value
+        assert download.suggested_filename.endswith(suffix)
+        path = REPORT / download.suggested_filename
+        download.save_as(path)
+        assert path.stat().st_size > 0
+        results['downloads'].append(download.suggested_filename)
+    saved = json.loads((REPORT / 'DOS-screen.json').read_text())
+    assert saved['format'] == 'vb6-tui-screen' and saved['version'] == 1
+    assert (REPORT / 'DOS-screen.b800').stat().st_size == saved['columns'] * saved['rows'] * 2
+    assert (REPORT / 'DOS-screen.ans').read_bytes().endswith(b'\x1b[0m')
+    page.evaluate("vb6Studio.command('viewForm')")
     # F5 uses the original sandbox and the normal bundled runtime.
     page.evaluate("vb6Studio.command('run')")
-    frame = page.frame_locator('iframe[title="Running Visual Basic application"]')
+    # Pin the actual iframe/frame pair. The all-controls fixture also contains a
+    # nested WebBrowser srcdoc: validate identity rather than repeatedly resolving
+    # a cross-origin FrameLocator after focus changes.
+    owner = page.locator('iframe[title="Running Visual Basic application"]')
+    expect(owner).to_have_count(1)
+    owner_handle = owner.element_handle()
+    frame = owner_handle.content_frame()
+    assert frame is not None and frame.parent_frame == page.main_frame
+    original_frame = frame
+
     frame.locator('[data-control="CommandButtonTest"]').wait_for()
     frame.locator('[data-control="CommandButtonTest"] .vb-tui-surface').wait_for()
     assert 'allow-same-origin' not in page.locator('iframe[title="Running Visual Basic application"]').get_attribute('sandbox')
     frame.locator('[data-control="CommandButtonTest"]').click()
+    assert owner_handle.is_visible() and owner_handle.content_frame() == original_frame
+    assert owner_handle.evaluate('(node)=>node===vb6Studio.runtimeFrame&&node.isConnected')
     expect(frame.locator('[data-control="TextBoxTest"] input')).to_have_value('DOS event works')
     text = frame.locator('[data-control="TextBoxTest"] input')
     text.fill('Native editing and clipboard path')
@@ -105,6 +162,9 @@ try:
     results['errors'] = errors
     assert not errors, errors
     results['runtime_checks'] = run_runtime_checks(browser, ROOT, REPORT, page.evaluate('vb6Studio.project'))
+    results['extended_checks'] = run_extended_checks(browser, ROOT, REPORT, page.evaluate('vb6Studio.project'))
+    results['boundary_checks'] = run_boundary_checks(browser, ROOT, REPORT, page.evaluate('vb6Studio.project'))
+    results['fidelity_matrix'] = run_fidelity_checks(browser, ROOT, REPORT)
     results['passed'] = True
     browser.close()
 except Exception:

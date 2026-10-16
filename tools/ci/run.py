@@ -51,6 +51,8 @@ def plan(group, engine, transport, root=ROOT):
                     argv += ['--http']
                 elif origin != 'memory':
                     raise ValueError('Compiler/runtime validation supports HTTP or memory transport')
+            if script == 'browser-data-recordsets.py':
+                argv += ['--browser', engine]
             if script == 'browser-designer-tests.py':
                 argv += ['--browser', engine, '--origin', origin]
             if engine == 'firefox' and script == 'figma-retained-webgl-browser-tests.py':

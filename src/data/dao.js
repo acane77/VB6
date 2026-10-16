@@ -14,7 +14,7 @@ function remove(collection,item){const i=collection.items.indexOf(item);if(i>=0)
 function records(result){return (result.values||[]).map(row=>Object.fromEntries(result.columns.map((c,i)=>[c.Name.toUpperCase(),row[i]])));}
 function validName(value){value=String(value);assertData(value.length>0&&value.length<=255&&!value.includes('\0'),'Invalid catalog name',3001);return value;}
 const typeSql={1:'BOOLEAN',2:'TINYINT',3:'SMALLINT',4:'INTEGER',5:'CURRENCY_TEXT',6:'REAL',7:'DOUBLE',8:'DATETIME',9:'BINARY',10:'VARCHAR',11:'BLOB',12:'TEXT',15:'GUID',16:'BIGINT',20:'DECIMAL_TEXT',21:'DECIMAL_TEXT',23:'DATETIME'};
-function declaredType(value){const t=String(value).toUpperCase();return /GUID/.test(t)?15:/BIGINT/.test(t)?16:/SMALLINT/.test(t)?3:/TINYINT/.test(t)?2:/BOOL|BIT/.test(t)?1:/INT/.test(t)?4:/CURRENCY|MONEY/.test(t)?5:/DOUBLE|FLOAT/.test(t)?7:/REAL|SINGLE/.test(t)?6:/DATE|TIME/.test(t)?8:/BLOB/.test(t)?11:/BINARY/.test(t)?9:/DECIMAL|NUMERIC/.test(t)?20:/TEXT|MEMO/.test(t)?12:10;}
+function declaredType(value){if(typeof value==='number')return Number(Object.keys(DAO_TYPES).find(key=>DAO_TYPES[key]===value)||10);const t=String(value).toUpperCase();return /GUID/.test(t)?15:/BIGINT/.test(t)?16:/SMALLINT/.test(t)?3:/TINYINT/.test(t)?2:/BOOL|BIT/.test(t)?1:/INT/.test(t)?4:/CURRENCY|MONEY/.test(t)?5:/DOUBLE|FLOAT/.test(t)?7:/REAL|SINGLE/.test(t)?6:/DATE|TIME/.test(t)?8:/BLOB/.test(t)?11:/BINARY/.test(t)?9:/DECIMAL|NUMERIC/.test(t)?20:/TEXT|MEMO/.test(t)?12:10;}
 function defaultSQL(value){
   if(value===''||value===undefined)return '';
   if(value===null)return 'NULL';if(typeof value==='boolean')return value?'1':'0';if(typeof value==='number'){assertData(Number.isFinite(value),'Invalid default',13);return String(value);}
@@ -85,7 +85,7 @@ export class DAODatabase {
     const tables=records(await this.connection.adapter.schema(20)),columns=records(await this.connection.adapter.schema(4));
     this.TableDefs.items=tables.filter(r=>r.TABLE_NAME!==internalCatalog).map(row=>{
       const t=new DAOTableDef(this,row.TABLE_NAME);t._attached=true;t._view=String(row.TABLE_TYPE).toLowerCase()==='view';
-      for(const c of columns.filter(c=>c.TABLE_NAME===row.TABLE_NAME)){const f=new DAOField(c.COLUMN_NAME,declaredType(c.DATA_TYPE),Number(String(c.DATA_TYPE).match(/\((\d+)\)/)?.[1]||0));f.Required=!c.IS_NULLABLE;f._primary=Number(c.PRIMARY_KEY||0);t.Fields.items.push(f);}
+      for(const c of columns.filter(c=>c.TABLE_NAME===row.TABLE_NAME)){const f=new DAOField(c.COLUMN_NAME,declaredType(c.TYPE_NAME??c.DATA_TYPE),Number(String(c.TYPE_NAME??c.DATA_TYPE).match(/\((\d+)\)/)?.[1]||0));f.Required=!c.IS_NULLABLE;if(c.SQLITE_ROWID)f.Attributes|=16;f._primary=Number(c.PRIMARY_KEY||0);t.Fields.items.push(f);}
       if(this.connection.Provider==='sqlite')this.refreshIndexes(t);return t;
     });
   }

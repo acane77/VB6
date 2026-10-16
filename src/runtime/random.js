@@ -8,7 +8,7 @@ import {coerce,numeric} from './values.js';
 export function randomLibrary(clock=()=>new Date()) {
   let seed=0x50000;
   const bits=new DataView(new ArrayBuffer(8));
-  const mix=word=>{seed=((seed&0xff)|(((word&0xffff)^(word>>>16))<<8))&0xffffff;};
+  const mix=word=>{word|=0;const mixed=(((word&0xffff)^(word>>16))<<8)|0;seed=((seed&0xff0000ff)|mixed)|0;};
   return {
     Rnd(number=1) {
       number=coerce(number,'Single');
@@ -20,16 +20,16 @@ export function randomLibrary(clock=()=>new Date()) {
         }
         seed=(Math.imul(seed,0x43fd43fd)+0xc39ec3)&0xffffff;
       }
-      return seed/0x1000000;
+      return Math.fround(Math.fround(seed)/Math.fround(0x1000000));
     },
     Randomize(number) {
       if(number===undefined) {
         const now=clock();
         bits.setFloat32(0,now.getHours()*3600+now.getMinutes()*60+now.getSeconds()+now.getMilliseconds()/1000,true);
-        mix(bits.getUint32(0,true));
+        mix(bits.getInt32(0,true));
       } else {
         bits.setFloat64(0,numeric(number),true);
-        mix(bits.getUint32(4,true));
+        mix(bits.getInt32(4,true));
       }
     },
   };

@@ -456,6 +456,8 @@ jobs:
           DISPLAY_MODE: ${{ matrix.display }}
           VB6_REQUIRE_GPU: '1'
           VB6_TEST_TRANSPORT: http
+          RENDERING_BROWSER_FLAGS: --enable-gpu --ignore-gpu-blocklist --enable-features=Vulkan --use-webgpu-adapter=swiftshader
+            --disable-vulkan-surface --disable-gpu-rasterization
         run: |
           if [ "$DISPLAY_MODE" = headed ]; then export VB6_HEADED=1; fi
           xvfb-run -a python tools/browser-graphics-tests.py

@@ -10,7 +10,8 @@ export function installRuntimeTUI(container, options = {}) {
   const requested = options.presentation ?? (root.hasAttribute('data-vb-dos') ? {
     mode: 'dos', profile: root.getAttribute('data-vb-dos'),
     cellWidth: Number(root.getAttribute('data-dos-cell-width')),
-    cellHeight: Number(root.getAttribute('data-dos-cell-height'))
+    cellHeight: Number(root.getAttribute('data-dos-cell-height')),formLayout:root.getAttribute('data-dos-form-layout'),
+    graphics: root.getAttribute('data-dos-graphics'), editing: root.getAttribute('data-dos-editing')
   } : {});
   const settings = normalizeDOSSettings(requested);
   let session = sessions.get(container);

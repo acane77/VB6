@@ -23,10 +23,15 @@ function checkExpressionTree(root,column) {
   return root;
 }
 function sameCallee(left,right) {
-  while(left.kind==='member'&&right.kind==='member'){
-    if(left.name!==right.name)return false;left=left.object;right=right.object;
+  // Receiver calls may contain indexed collections or arbitrary expressions.
+  // Compare the two parses structurally without recursion or evaluating them.
+  const stack=[left,right];
+  while(stack.length){const b=stack.pop(),a=stack.pop();if(a===b)continue;
+    if(!a||!b||typeof a!=='object'||typeof b!=='object'||Array.isArray(a)!==Array.isArray(b))return false;
+    const keys=Object.keys(a);if(keys.length!==Object.keys(b).length)return false;
+    for(const key of keys){if(!Object.hasOwn(b,key))return false;stack.push(a[key],b[key]);}
   }
-  return left.kind===right.kind&&(left.kind==='with'||left.kind==='id'&&left.name===right.name);
+  return true;
 }
 export class ExpressionParser {
   constructor(text) { this.text=text; this.tokens=tokenize(text); this.i=0; this.depth=0; }
@@ -107,8 +112,24 @@ export function parseCall(text,{explicit=false,continuations=null}={}) {
   // not another part of the procedure name (MS-VBAL 5.4.2.1). An explicit
   // physical continuation also permits member access (5.6.12); logical-line
   // joining retains its offsets rather than confusing it with ordinary spaces.
-  while(p.peek().value==='.'&&(explicit||p.peek().start===p.tokens[p.i-1].end||continuations?.some(at=>at>p.tokens[p.i-1].end&&at<=p.peek().start))){
-    p.take();node={kind:'member',object:node,name:p.memberName()};
+  const joined=(token,previous)=>explicit||token.start===previous.end||continuations?.some(at=>at>previous.end&&at<=token.start);
+  while(true){
+    const token=p.peek();
+    if(['.','!'].includes(token.value)&&token.type==='op'&&joined(token,p.tokens[p.i-1])){
+      p.take();const name=p.memberName();node=token.value==='.'?{kind:'member',object:node,name}:{kind:'call',callee:node,args:[{kind:'literal',value:name,valueType:'string'}]};continue;
+    }
+    // Parentheses here are a receiver's argument list only when followed by
+    // member access. Otherwise preserve VB's no-Call grouping/ByRef rules.
+    if(token.type==='op'&&token.value==='('){
+      let depth=0,end=p.i;
+      for(;end<p.tokens.length;end++){const t=p.tokens[end];if(t.type==='op'){if(t.value==='(')depth++;else if(t.value===')'&&!--depth)break;}}
+      const next=p.tokens[end+1];
+      if(next?.type==='op'&&['.','!'].includes(next.value)&&joined(next,p.tokens[end])){
+        p.take();const args=[];if(!p.match(')')){do{args.push(p.argument());}while(p.match(','));p.expect(')');}
+        node={kind:'call',callee:node,args};continue;
+      }
+    }
+    break;
   }
   if(p.peek().type==='eof') return p.finish({kind:'call',callee:node,args:[]});
   const rest=text.slice(p.peek().start).trim();
@@ -130,16 +151,20 @@ export function parseCall(text,{explicit=false,continuations=null}={}) {
 function numericLiteralType(token){
   const suffix=token.raw.at(-1),explicit={'%':'integer','&':'long','!':'single','#':'double'}[suffix];
   if(explicit)return explicit;
-  if(/^[&][ho]/i.test(token.raw))return parseInt(token.raw.slice(2),/^&h/i.test(token.raw)?16:8)<=65535?'integer':'long';
+  if(/^&(?:[ho]|[0-7])/i.test(token.raw))return radixLiteralValue(token.raw)<=65535?'integer':'long';
   if(/[.eEdD]/.test(token.raw))return 'double';
   return token.value>=-32768&&token.value<=32767?'integer':token.value>=-2147483648&&token.value<=2147483647?'long':'double';
 }
 
 function numericLiteralValue(token){
-  if(/^&[ho]/i.test(token.raw)){
-    const n=parseInt(token.raw.slice(2),/^&h/i.test(token.raw)?16:8);
+  if(/^&(?:[ho]|[0-7])/i.test(token.raw)){
+    const n=radixLiteralValue(token.raw);
     if(n>4294967295)throw new VBError('Overflow in numeric literal',6);
     return n>2147483647?n-4294967296:n>=32768&&n<=65535&&!token.raw.endsWith('&')?n-65536:n;
   }
   return token.value;
+}
+
+function radixLiteralValue(raw) {
+  return parseInt(raw.slice(/^&[ho]/i.test(raw)?2:1),/^&h/i.test(raw)?16:8);
 }

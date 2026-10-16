@@ -9,13 +9,21 @@ test('exporter browser observation retains CSP and awaits resolved state', () =>
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
+
+test('offline fixture server always serves the selected worker bytes', () => {
+  const result = spawnSync(process.env.PYTHON || 'python', ['tools/test_exporter_offline_server.py'], {cwd: root, encoding: 'utf8', timeout: 10000});
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
 for (const name of ['browser-exporter-tests.py', 'browser-exporter-offline-tests.py']) {
   test(name + ' retains real CSP without in-page polling compilation', () => {
     const source = readFileSync(new URL('tools/' + name, root), 'utf8');
     assert.match(source, /from exporter_browser_wait import wait_for_export/);
     assert.doesNotMatch(source, /\.wait_for_function\(/);
-    assert.match(source, /script-src 'self'/);
-    assert.doesNotMatch(source, /unsafe-eval|bypass_csp\s*=\s*True|bypassCSP\s*:\s*true/);
+    const policySource=name==='browser-exporter-offline-tests.py'
+      ? readFileSync(new URL('tools/exporter_offline_server.py',root),'utf8') : source;
+    assert.match(policySource, /script-src 'self'/);
+    assert.doesNotMatch(source+policySource, /unsafe-eval|bypass_csp\s*=\s*True|bypassCSP\s*:\s*true/);
   });
 }
 

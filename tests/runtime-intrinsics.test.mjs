@@ -26,6 +26,15 @@ test('Randomize merges Double bits and preserves low seed byte',()=>{
   r.Rnd(-1);r.Randomize(42);assert.equal(r.Rnd(),0.907809317111969);
   r.Randomize(42);assert.notEqual(r.Rnd(),0.907809317111969);
 });
+test('Randomize preserves signed high state until the next generated value',()=>{
+  const r=randomLibrary();r.Rnd(0);for(let i=0;i<256;i++)r.Rnd();
+  r.Rnd(-1);r.Rnd(0);r.Rnd();
+  for(const seed of [0,1,42]){r.Randomize(seed);r.Rnd(0);r.Rnd();}
+  r.Randomize(-42);
+  assert.equal(r.Rnd(0),-0.24894464015960693);
+  assert.equal(r.Rnd(),0.390491783618927);
+});
+
 test('Randomize without argument uses Single timer seconds and leaves Rnd(0) observable',()=>{
   const r=randomLibrary(()=>new Date(2000,0,1,0,0,0,0));r.Randomize();assert.equal(r.Rnd(0),0);assert.equal(r.Rnd(),0xc39ec3/16777216);
 });

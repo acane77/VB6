@@ -1,4 +1,5 @@
 import {MISSING} from '../runtime/values.js';
+import {nativeDataValue} from './native-values.js';
 import {createCommonAutomationRegistry} from '../automation/common-objects.js';
 import {HttpTransport} from '../automation/http-transport.js';
 import {httpCommandOptions} from './service-definitions.js';
@@ -72,6 +73,18 @@ export class DataContext {
     return environment;
   }
   install(vm){
+    // Adapt registered ADO/DAO/RDO arrays at the VM boundary without changing
+    // direct JavaScript provider results. Keep this context-owned so later VM
+    // features and graphics dispatch remain untouched by data integration.
+    if(!vm.__dataNativeValueAdapter){
+      const nativeScalar=vm.nativeScalar,callResolvedExpression=vm.callResolvedExpression;
+      vm.nativeScalar=function(object,name,value){return nativeScalar.call(this,object,name,nativeDataValue(object,value));};
+      vm.callResolvedExpression=async function(node,target,frame){
+        const result=await callResolvedExpression.call(this,node,target,frame);
+        return nativeDataValue(target?.receiver??target,result);
+      };
+      Object.defineProperty(vm,'__dataNativeValueAdapter',{value:true});
+    }
     if(vm.host.dataHttpAuthorize!==undefined){assertData(typeof vm.host.dataHttpAuthorize==='function','HTTP host policy must be a function');this.transport.authorize=vm.host.dataHttpAuthorize;}
     if(vm.host.commonAutomation!==undefined)assertData(typeof vm.host.commonAutomation==='boolean','commonAutomation must be Boolean');
     if(vm.host.commonAutomation===false){this.commonAutomation?.close();this.commonAutomation=null;}

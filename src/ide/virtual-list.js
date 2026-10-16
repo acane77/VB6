@@ -20,12 +20,17 @@ export class ToolList {
       if(next!==undefined){e.preventDefault();this.select(next);}
     });lists.set(this.root,this);this.observeDocument();
   }
+  get rowHeight(){
+    const pitch=parseFloat(this.root?.ownerDocument.defaultView.getComputedStyle?.(this.root)?.getPropertyValue('--tui-row-height'));
+    return Number.isFinite(pitch)&&pitch>=8&&pitch<=128?pitch:this._rowHeight;
+  }
+  set rowHeight(value){this._rowHeight=value;}
   observeDocument(){
     this.observerWindow=this.root.ownerDocument.defaultView;
     // DOM writes during observer delivery can change scrollbar geometry and
     // trigger an undelivered-notifications error. Paint on the next frame.
     this.observer=new this.observerWindow.ResizeObserver(()=>this.schedulePaint());
-    this.observer.observe(this.root);
+    this.observer.observe(this.root);if(this.rowProbe?.isConnected)this.observer.observe(this.rowProbe);
   }
   cancelPaint(){
     if(this.paintFrame!==null){this.paintWindow.cancelAnimationFrame(this.paintFrame);this.paintFrame=null;}
@@ -51,11 +56,11 @@ export class ToolList {
     if(!this.items.length)return;
     // Read viewport geometry before changing scroll/selection DOM. Design source:
     // https://web.dev/articles/avoid-large-complex-layouts-and-layout-thrashing
-    const height=this.root.clientHeight,scrollTop=this.root.scrollTop;
+    const height=this.root.clientHeight,scrollTop=this.root.scrollTop,rowHeight=this.rowHeight;
     this.selected=Math.max(0,Math.min(this.items.length-1,index));
-    const top=this.selected*this.rowHeight;
+    const top=this.selected*rowHeight;
     if(top<scrollTop)this.root.scrollTop=top;
-    else if(top+this.rowHeight>scrollTop+height)this.root.scrollTop=top-height+this.rowHeight;
+    else if(top+rowHeight>scrollTop+height)this.root.scrollTop=top-height+rowHeight;
     this.paint(height);if(notify)this.onSelect?.(this.items[this.selected]);
   }
   paint(measuredHeight){
@@ -64,10 +69,11 @@ export class ToolList {
     // A retained visible row is updated, not replaced. Unchanged paint has zero
     // DOM writes; scrolling creates only rows newly entering the overscan range.
     // This applies the read-before-write guidance above, not third-party code.
-    const height=measuredHeight??this.root.clientHeight,scrollTop=this.root.scrollTop;
+    const height=measuredHeight??this.root.clientHeight,scrollTop=this.root.scrollTop,rowHeight=this.rowHeight;
+    const extent=this.items.length*rowHeight+'px';if(this.spacer.style.height!==extent)this.spacer.style.height=extent;
     if(!this.root.getAttribute('aria-label'))this.root.setAttribute('aria-label','Items');
-    const start=Math.max(0,Math.floor(scrollTop/this.rowHeight)-2);
-    const end=Math.min(this.items.length,start+Math.ceil((height||190)/this.rowHeight)+5);
+    const start=Math.max(0,Math.floor(scrollTop/rowHeight)-2);
+    const end=Math.min(this.items.length,start+Math.ceil((height||190)/rowHeight)+5);
     for(const [index,record] of this.rows)if(index<start||index>=end){record.node.remove();this.rows.delete(index);}
     let next=this.layer.firstElementChild;
     for(let i=start;i<end;i++){
@@ -76,20 +82,23 @@ export class ToolList {
       if(!record){
         const glyphNode=el('span',{class:'member-kind','aria-hidden':'true'},icon(glyph,16));
         const labelNode=el('span',{class:'tool-list-label'},item.label);
-        const node=el('div',{class:'tool-list-row',id:this.id+'-'+i,role:'option','aria-posinset':i+1,'data-index':i,style:{top:i*this.rowHeight+'px'},title:item.label},glyphNode,labelNode);
+        const node=el('div',{class:'tool-list-row',id:this.id+'-'+i,role:'option','aria-posinset':i+1,'data-index':i,style:{top:i*rowHeight+'px'},title:item.label},glyphNode,labelNode);
         record={node,glyphNode,labelNode,glyph,label:item.label,selected:null,count:null};this.rows.set(i,record);
       }
+      const top=i*rowHeight+'px';if(record.node.style.top!==top)record.node.style.top=top;
       if(record.label!==item.label){record.labelNode.textContent=item.label;record.node.title=item.label;record.label=item.label;}
       if(record.glyph!==glyph){record.glyphNode.replaceChildren(icon(glyph,16));record.glyph=glyph;}
       if(record.selected!==selected){record.node.classList.toggle('selected',selected);record.node.setAttribute('aria-selected',String(selected));record.selected=selected;}
       if(record.count!==this.items.length){record.node.setAttribute('aria-setsize',String(this.items.length));record.count=this.items.length;}
       if(record.node===next)next=next.nextElementSibling;else this.layer.insertBefore(record.node,next);
     }
+    const probe=this.layer.firstElementChild;
+    if(this.rowProbe!==probe){if(this.rowProbe)this.observer.unobserve(this.rowProbe);this.rowProbe=probe;if(probe)this.observer.observe(probe);}
     const active=this.selected>=start&&this.selected<end?this.id+'-'+this.selected:null;
     if(active!==this.root.getAttribute('aria-activedescendant')){
       if(active)this.root.setAttribute('aria-activedescendant',active);else this.root.removeAttribute('aria-activedescendant');
     }
   }
 
-  dispose(){this.disposed=true;this.cancelPaint();this.observer.disconnect();this.rows.clear();lists.delete(this.root);}
+  dispose(){this.disposed=true;this.cancelPaint();this.observer.disconnect();this.rowProbe=null;this.rows.clear();lists.delete(this.root);}
 }

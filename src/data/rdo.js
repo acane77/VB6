@@ -1,5 +1,5 @@
 import {assertData,DATA_LIMITS,quoteIdentifier} from './common.js';
-import {dataDefault,dataMembers} from './defaults.js';
+import {dataDefault,dataMembers,dataObject} from './defaults.js';
 import {DataCollection} from './collection.js';
 import {ConnectedRecordset} from './connected-recordset.js';
 import {DAORecordset} from './dao-recordset.js';
@@ -52,7 +52,7 @@ export class RDOQuery {
 
 export class RDOResultset {
   constructor(connection,result,source,mode){
-    this.__type='RDO.rdoResultset';this._connection=connection;this._source=source;this._mode=mode;this._collisions=[];this._conflicts=new WeakMap();this._deletedInBatch=false;
+    dataObject(this);this.__type='RDO.rdoResultset';this._connection=connection;this._source=source;this._mode=mode;this._collisions=[];this._conflicts=new WeakMap();this._deletedInBatch=false;
     const cursor=new ConnectedRecordset(connection._context);cursor.ActiveConnection=connection._ado;cursor.Source=source instanceof RDOQuery?source.SQL:String(source);cursor.load(result,mode.lock===5?4:mode.lock===1?1:3);connection._ado.recordsets.add(cursor);
     this._dao=new DAORecordset(cursor,null,mode.type===0?8:2,cursor.Source);this._columns=this.columns();dataMembers(this,['rdoColumns']);connection.rdoResultsets.items.push(this);
   }

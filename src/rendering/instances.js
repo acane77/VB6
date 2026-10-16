@@ -7,9 +7,10 @@
  */
 export const INSTANCE_FLOATS = 24;
 export const INSTANCE_BYTES = INSTANCE_FLOATS * 4;
-export function encodeInstances(commands, data, scaleX, scaleY) {
-  let at = 0;
-  for (const c of commands) {
+export function encodeInstances(commands, data, scaleX, scaleY, first = 0, end = commands.length) {
+  let at = first * INSTANCE_FLOATS;
+  for (let index = first; index < end; index++) {
+    const c = commands[index];
     data.set(c.rect, at);
     const [x, y, w, h] = c.clip;
     const left = Math.ceil(x * scaleX - .5), top = Math.ceil(y * scaleY - .5);
@@ -29,11 +30,13 @@ export function encodeInstances(commands, data, scaleX, scaleY) {
  */
 export function canReuseInstances(painter, scene, size) {
   return scene.sealed === true && painter.encodedScene === scene &&
-    painter.encodedWidth === size.width && painter.encodedHeight === size.height;
+    painter.encodedWidth === size.width && painter.encodedHeight === size.height &&
+    painter.encodedData === painter.data;
 }
 export function rememberInstances(painter, scene, size) {
   painter.encodedScene = scene.sealed ? scene : null;
   painter.encodedWidth = size.width; painter.encodedHeight = size.height;
+  painter.encodedScaleX = size.scaleX; painter.encodedScaleY = size.scaleY; painter.encodedData = painter.data;
 }
 
 /** Ordered batches keep page identities, not GPU handles, so a resized/revised
@@ -51,4 +54,37 @@ export function prepareBatches(painter, scene) {
   painter.batches = {groups, pages}; painter.batchedScene = scene.sealed ? scene : null;
   painter.stats.batchBuilds = (painter.stats.batchBuilds || 0) + 1;
   return painter.batches;
+}
+
+/** Compare only fields that are encoded into the instance buffer. A texture
+ * identity change rebuilds ordered bindings, but does not change a quad's bytes.
+ * Prefix/suffix comparison keeps changed commands at their original offsets;
+ * removing a tail never requires uploading the unchanged surviving prefix.
+ */
+function sameInstance(a, b) {
+  if (!a || !b || Boolean(a.hole) !== Boolean(b.hole) || Boolean(a.page) !== Boolean(b.page) ||
+      Boolean(a.vertical) !== Boolean(b.vertical)) return false;
+  for (const key of ['rect', 'clip', 'color', 'color2', 'uv']) {
+    const x = a[key], y = b[key];
+    if (x === y) continue;
+    if (!x || !y || x.length !== y.length) return false;
+    for (let i = 0; i < x.length; i++) if (!Object.is(x[i], y[i])) return false;
+  }
+  return true;
+}
+export function instanceUpdateRange(painter, scene, size) {
+  const end = scene.commands.length;
+  if (canReuseInstances(painter, scene, size)) return {first: 0, end: 0};
+  const previous = painter.encodedScene;
+  if (!scene.sealed || !previous?.sealed || painter.encodedData !== painter.data ||
+      painter.encodedScaleX !== size.scaleX || painter.encodedScaleY !== size.scaleY) return {first: 0, end};
+  let first = 0, last = end;
+  while (first < end && sameInstance(previous.commands[first], scene.commands[first])) first++;
+  while (last > first && sameInstance(previous.commands[last - 1], scene.commands[last - 1])) last--;
+  return {first, end: last};
+}
+export function recordInstanceUpload(stats, first, end) {
+  const bytes = (end - first) * INSTANCE_BYTES;
+  stats.instanceUploads++; stats.uploadedBytes += bytes;
+  stats.instanceUploadedBytes = (stats.instanceUploadedBytes || 0) + bytes;
 }

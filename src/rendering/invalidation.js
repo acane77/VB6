@@ -33,3 +33,28 @@ export function notifyControlPaint(element) {
     }
   }
 }
+
+/** Read-only projection access to canonical primitive properties. This does not
+ * retain a second model, expose collections/VM objects or let a renderer write
+ * to VB state. A retired provider cannot remove a newer owner's binding. */
+const properties = new WeakMap();
+export function bindControlPaintProperties(element, read) {
+  if (!element || typeof element !== 'object' || typeof read !== 'function')
+    throw new TypeError('A control element and property reader are required');
+  const binding = {read}; properties.set(element, binding);
+  return () => { if (properties.get(element) === binding) properties.delete(element); };
+}
+export function readControlPaintProperties(element, keys) {
+  if (!Array.isArray(keys) || keys.length > 64 || keys.some(key => typeof key !== 'string'))
+    throw new TypeError('At most 64 primitive property names are accepted');
+  const result = Object.create(null), value = properties.get(element)?.read();
+  if (value) for (const key of keys) {
+    // Accessor properties could invoke user code. Only materialized own data
+    // descriptors are presentation state, and only primitive values escape.
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !('value' in descriptor)) continue;
+    const v = descriptor.value;
+    if (typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number' && Number.isFinite(v)) result[key] = v;
+  }
+  return Object.freeze(result);
+}

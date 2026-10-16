@@ -10,11 +10,12 @@ import shutil
 import subprocess
 import threading
 from functools import partial
-from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-from urllib.parse import urlsplit, quote
+from http.server import ThreadingHTTPServer
+from urllib.parse import quote
 import zipfile
 from playwright.sync_api import sync_playwright
 from exporter_browser_wait import wait_for_export
+from exporter_offline_server import offline_fixture_handler
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / 'reports/exporter-offline'
@@ -32,40 +33,7 @@ state = {
 }
 results, errors = [], []
 
-class Handler(SimpleHTTPRequestHandler):
-    extensions_map = {**SimpleHTTPRequestHandler.extensions_map, '.webmanifest': 'application/manifest+json'}
-    def log_message(self, *args):
-        pass
-    def translate_path(self, value):
-        route = urlsplit(value).path
-        for app in ('a', 'b', 'broken', 'failed'):
-            prefix = '/apps/' + app + '/'
-            if route.startswith(prefix):
-                return str(REPORT / 'fixtures' / state[app] / (route[len(prefix):] or 'index.html'))
-        if route.startswith('/download/'):
-            return str(REPORT / 'download' / (route[len('/download/'):] or 'index.html'))
-        return super().translate_path(value)
-    def end_headers(self):
-        self.send_header('Cache-Control', 'no-cache')
-        if self.path.startswith(('/apps/', '/download/')):
-            self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'")
-        super().end_headers()
-    def do_GET(self):
-        route = urlsplit(self.path).path
-        if route.endswith('/service-worker.js'):
-            state['worker_requests'] += 1
-        if route == '/apps/broken/assets/raw.bin' and state['corrupt']:
-            body = b'corrupted-upload'
-            self.send_response(200); self.send_header('Content-Type', 'application/octet-stream')
-            self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
-            return
-        if route.endswith('/api/data'):
-            state['api_requests'] += 1
-            body = b'{"networkOnly":true}' if state['api_available'] else b'{"networkOnly":false}'
-            self.send_response(200 if state['api_available'] else 503); self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
-            return
-        super().do_GET()
+Handler = offline_fixture_handler(ROOT, REPORT, state)
 
 server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, directory=str(ROOT)))
 server.daemon_threads = True

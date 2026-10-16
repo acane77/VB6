@@ -79,8 +79,37 @@ export function emitStatements(writer,context) {
     if(/^Return$/i.test(text)){line('GoTo __vbGoSubReturn');return;}
     for(const op of parseLeafStatement(text,context.module,proc,context.line))emitLeaf(op);
   };
+  const recordArrayAssignment=op=>{
+    if(op.op!=='assign')return false;
+    let target=op.target;while(target?.kind==='group')target=target.expr;
+    if(target?.kind!=='member')return false;
+    let element=target.object;while(element?.kind==='group')element=element.expr;
+    while(element?.kind==='member'){element=element.object;while(element?.kind==='group')element=element.expr;}
+    if(element?.kind!=='call'||(element.args||[]).some(arg=>arg.kind==='missing'))return false;
+    const symbol=context.resolve(element),arraySymbol=context.resolve(element.callee);
+    if(!symbol?.arrayElement||!context.record(symbol.type)||context.arrayPlan(arraySymbol))return false;
+    const arrayName='__vbArray'+context.temp++,indices=[];
+    line('Dim '+arrayName+' = '+expression(element.callee,context,{reference:true}));
+    for(const argument of element.args||[]){
+      const indexName='__vbIndex'+context.temp++,value=argument.kind==='named'?argument.expr:argument;
+      line('Dim '+indexName+' As Integer = CInt('+e(value)+')');indices.push(indexName);
+    }
+    const access=arrayName+'('+indices.join(', ')+')',recordName='__vbRecord'+context.temp++;
+    line('Dim '+recordName+' As '+context.netType(symbol.type)+' = '+access);
+    const replace=node=>{
+      if(node===element)return {kind:'id',name:recordName};
+      if(node?.kind==='group')return {...node,expr:replace(node.expr)};
+      if(node?.kind==='member')return {...node,object:replace(node.object)};
+      return node;
+    };
+    context.locals.set(key(recordName),{name:recordName,type:symbol.type,local:true});
+    try{line(assignment(replace(target),op.expr,context,{objectSet:op.objectSet,asReturn:context.directReturn}));}
+    finally{context.locals.delete(key(recordName));}
+    line(access+' = '+recordName);
+    return true;
+  };
   const emitLeaf=op=>{
-    if(emitArrayStatement(op,context,line)||emitFileRecord(op,context,line))return;
+    if(emitArrayStatement(op,context,line)||emitFileRecord(op,context,line)||recordArrayAssignment(op))return;
     switch(op.op){
       case 'dim': return; // Hoisted to procedure entry, matching VB6 procedure scope.
       case 'assign': line(assignment(op.target,op.expr,context,{objectSet:op.objectSet,asReturn:context.directReturn}));return;

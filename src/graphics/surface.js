@@ -1,3 +1,4 @@
+import {notifyControlPaint} from '../rendering/invalidation.js';
 import {GPURasterPresenter} from '../../packages/win32-browser/src/gpu-presenter.js';
 import { colorValue, getTheme } from '../theme/theme.js';
 import {RetainedGraphics} from './retained.js';
@@ -5,11 +6,14 @@ import {RasterCache,canvas2D} from './raster.js';
 import {GRAPHICS_LIMITS,graphicsColor,triangleCompatible} from './contract.js';
 /** Demand-rendered retained graphics. Opaque integer fills use triangles; other
  * operations share ordered CPU rasterization and a cached WebGPU texture. */
-const surfaces = new WeakMap();
+const surfaces = new WeakMap(), containers = new WeakMap();
+export function graphicsSurfaceFor(container){return containers.get(container)||null;}
 export function refreshGraphicsSurfaces(root) { for (const canvas of root.querySelectorAll('canvas.graphics-surface')) surfaces.get(canvas)?.transferDocument(); }
 const sharedDevices = new WeakMap();
+export const GRAPHICS_GPU_DEVICE_TIMEOUT=15000;
 export function oleColor(color,fallback='#c0c0c0',theme='classic'){return colorValue(color,fallback,theme);}
-export async function getGPUDevice(view=globalThis) {
+export async function getGPUDevice(view=globalThis,timeout=GRAPHICS_GPU_DEVICE_TIMEOUT) {
+  if(!Number.isFinite(timeout)||timeout<1||timeout>60000)throw new RangeError('Invalid graphics GPU timeout');
   if(view.vb6NativeGPUUnavailable)return null;
   if(view.vb6NativeGPUDevice)return view.vb6NativeGPUDevice;
   const gpu=view.navigator?.gpu;if(!gpu)return null;
@@ -27,9 +31,9 @@ export async function getGPUDevice(view=globalThis) {
     sharedDevices.set(view,pending);
     pending.then(device=>{if(!device&&sharedDevices.get(view)===pending)sharedDevices.delete(view);});
   }
-  let timeout;
-  try{return await Promise.race([pending,new Promise(resolve=>timeout=setTimeout(()=>resolve(null),3000))]);}
-  finally{clearTimeout(timeout);}
+  let timer;
+  try{return await Promise.race([pending,new Promise(resolve=>timer=setTimeout(()=>resolve(null),timeout))]);}
+  finally{clearTimeout(timer);}
 }
 const SHADER=`struct Screen { size: vec2f, padding: vec2f };
 @group(0) @binding(0) var<uniform> screen: Screen;
@@ -46,7 +50,7 @@ export class GraphicsSurface extends RetainedGraphics {
     this.themeChanged=()=>{this.theme=getTheme(container).id;this.invalidate();};
     this.fontsChanged=()=>{this.replayEpoch++;this.invalidate();};
     this.bindDocument();
-    this.canvas=container.ownerDocument.createElement('canvas');this.canvas.className='graphics-surface';this.canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;pointer-events:none';container.append(this.canvas);surfaces.set(this.canvas,this);
+    this.canvas=container.ownerDocument.createElement('canvas');this.canvas.className='graphics-surface';this.canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;pointer-events:none';container.append(this.canvas);surfaces.set(this.canvas,this);containers.set(container,this);
     this.context=this.canvas.getContext('2d');if(!this.context){this.unbindDocument();this.canvas.remove();throw new Error('Canvas2D graphics fallback unavailable');}
     this.resizeObserver=new this.themeDocument.defaultView.ResizeObserver(()=>this.scheduleResize());this.resizeObserver.observe(container);
     this.resize();if(backend!=='canvas2d')this.gpuReady=this.initializeGPU();else this.reportBackend('Canvas2D');
@@ -129,7 +133,7 @@ export class GraphicsSurface extends RetainedGraphics {
     this.invalidate();
   }
   invalidate(){
-    if(this.disposed)return;this.paintRevision=(this.paintRevision||0)+1;
+    if(this.disposed)return;notifyControlPaint(this.container.closest('.vb-control,.vb-form'));this.paintRevision=(this.paintRevision||0)+1;
     if(this.batchDepth){this.batchDirty=true;return;}if(this.dirty)return;
     this.dirty=true;this.frameWindow=this.container.ownerDocument.defaultView;
     this.raf=this.frameWindow.requestAnimationFrame(()=>{this.dirty=false;this.raf=0;this.render();});
@@ -205,7 +209,7 @@ export class GraphicsSurface extends RetainedGraphics {
   }
   get statistics(){return Object.freeze({commands:this.commands.length,commandBytes:this.commandBytes,rasterBytes:this.rasterBytes,pendingImages:this.imageTasks.size,backend:this.renderingBackend||this.backend,logicalRebuilds:this.logicalCache?.rebuilds||0,displayRebuilds:this.displayCache?.rebuilds||0,logicalCommandsPainted:this.logicalCache?.painter.painted||0,displayCommandsPainted:this.displayCache?.painter.painted||0,gpuBufferBytes:this.bufferSize||0,error:this.renderError||this.gpuError||this.pictureError||null});}
   dispose(){
-    if(this.disposed)return;this.disposed=true;
+    if(this.disposed)return;this.disposed=true;if(containers.get(this.container)===this)containers.delete(this.container);
     this.resizeObserver?.disconnect();this.resizeWindow?.cancelAnimationFrame(this.resizeFrame);(this.frameWindow||this.themeDocument.defaultView).cancelAnimationFrame(this.raf);this.dirty=false;
     this.unbindDocument();this.releaseGPU();this.disposeRetained();this.vertexData=this.vertexCommands=this.uploadedVertices=null;this.colorCache?.clear();this.colorContext=null;
     surfaces.delete(this.canvas);this.canvas.remove();
