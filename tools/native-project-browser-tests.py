@@ -165,6 +165,155 @@ class NativeProjects(unittest.TestCase):
         self.assertIn(b'edit A', files['A.bas']); self.assertIn(b'edit B', files['B.bas'])
         self.assertEqual(files['Suite.vbg'], group['Suite.vbg'])
 
+    def simple_group(self):
+        return {'Suite.vbg': b'VBGROUP 5.0\r\nStartupProject=A.vbp\r\nProject=B.vbp\r\n',
+                'A.vbp': b'Type=Exe\r\nName="A"\r\nModule=M; A.bas\r\nStartup="Sub Main"\r\n',
+                'B.vbp': b'Type=Exe\r\nName="B"\r\nModule=N; B.bas\r\nStartup="Sub Main"\r\n',
+                'A.bas': b'Attribute VB_Name = "M"\r\nPublic Sub Main()\r\nEnd Sub\r\n',
+                'B.bas': b'Attribute VB_Name = "N"\r\nPublic Sub Main()\r\nEnd Sub\r\n'}
+
+    def case_create_group_ui_and_undo(self):
+        self.load(); self.edit('vb6Studio.project.description="Before grouping"')
+        before = self.js('JSON.stringify(vb6Studio.project)')
+        self.start('vb6Studio.command("nativeGroup")')
+        self.page.get_by_label('Project group path', exact=True).fill('Suite.vbg')
+        self.button('Create Group'); self.result(True)
+        self.assertEqual(self.js('vb6Studio.project.nativeWorkspace.order'), ['app/App.vbp'])
+        self.assertTrue(self.js('vb6Studio.dirty'))
+        self.assertIn('Suite.vbg', self.export())
+        self.js('() => vb6Studio.command("undo")')
+        self.assertEqual(self.js('JSON.stringify(vb6Studio.project)'), before)
+        self.js('() => vb6Studio.command("redo")')
+        self.assertEqual(self.js('vb6Studio.project.nativeWorkspace.path'), 'Suite.vbg')
+
+    def case_add_project_picker_keeps_dirty_current_project(self):
+        self.load(); self.edit('vb6Studio.project.description="Keep current edits"')
+        other = {'lib/B.vbp': b'Type=Exe\r\nName="B"\r\nModule=Other; B.bas\r\nStartup="Sub Main"\r\n',
+                 'lib/B.bas': b'Attribute VB_Name = "Other"\r\nSub Main()\r\nEnd Sub\r\n'}
+        with self.page.expect_file_chooser() as event:
+            self.js('() => vb6Studio.command("nativeAddProject")')
+        event.value.set_files({'name': 'B.zip', 'mimeType': 'application/zip', 'buffer': archive(other)})
+        self.page.get_by_label('Project entry', exact=True).select_option('lib/B.vbp')
+        self.button('Open')
+        self.page.wait_for_function('vb6Studio.project.nativeWorkspace?.order.length===2')
+        self.assertEqual(self.js('vb6Studio.project.description'), 'Keep current edits')
+        self.assertTrue(self.js('vb6Studio.dirty'))
+        self.page.get_by_label('Active project in group', exact=True).select_option('lib/B.vbp')
+        self.assertEqual(self.js('vb6Studio.project.name'), 'B')
+        self.assertEqual(self.export()['lib/B.bas'], other['lib/B.bas'])
+
+    def case_group_reorder_move_startup_and_selection_ui(self):
+        self.load(self.simple_group(), 'Suite.vbg')
+        self.start('vb6Studio.command("nativeGroup")')
+        self.page.get_by_label('Projects in group', exact=True).select_option('B.vbp')
+        self.page.get_by_role('button', name='Move Up', exact=True).click()
+        self.page.get_by_label('Project manifest path', exact=True).fill('library/B.vbp')
+        self.page.get_by_role('button', name='Apply Path', exact=True).click()
+        self.page.get_by_label('Startup project', exact=True).select_option('library/B.vbp')
+        self.page.get_by_label('Active project', exact=True).select_option('library/B.vbp')
+        self.button('OK'); self.result(True)
+        self.assertEqual(self.js('vb6Studio.project.name'), 'B')
+        self.assertEqual(self.js('vb6Studio.project.nativeWorkspace.order'), ['library/B.vbp', 'A.vbp'])
+        files = self.export()
+        self.assertNotIn('B.vbp', files)
+        self.assertIn(b'Module=N; ..\\B.bas', files['library/B.vbp'])
+        self.assertIn(b'StartupProject=library\\B.vbp', files['Suite.vbg'])
+        self.page.screenshot(path=str(REPORT / f'{self.engine}-{self.mode}-group-authoring.png'))
+        self.load(files, 'Suite.vbg')
+        self.assertEqual(self.js('vb6Studio.project.name'), 'B')
+        self.assertEqual(self.js('vb6Studio.project.modules[0].sourcePath'), 'B.bas')
+
+    def case_group_move_preserves_pending_selections(self):
+        self.load(self.simple_group(), 'Suite.vbg')
+        before = self.js('JSON.stringify(vb6Studio.project)')
+        self.start('vb6Studio.command("nativeGroup")')
+        self.page.get_by_label('Projects in group', exact=True).select_option('B.vbp')
+        self.page.get_by_label('Active project', exact=True).select_option('B.vbp')
+        self.page.get_by_label('Startup project', exact=True).select_option('B.vbp')
+        self.page.get_by_label('Project manifest path', exact=True).fill('library/Renamed.vbp')
+        self.page.get_by_role('button', name='Apply Path', exact=True).click()
+        self.assertEqual(self.page.get_by_label('Active project', exact=True).input_value(), 'library/Renamed.vbp')
+        self.assertEqual(self.page.get_by_label('Startup project', exact=True).input_value(), 'library/Renamed.vbp')
+        self.button('Cancel'); self.result(False)
+        self.assertEqual(self.js('JSON.stringify(vb6Studio.project)'), before)
+
+    def case_group_remove_cancel_and_undo_ui(self):
+        self.load(self.simple_group(), 'Suite.vbg')
+        self.edit("vb6Studio.project.modules[0].code+=\"\\n' retain removed edit\"")
+        before = self.js('JSON.stringify(vb6Studio.project)')
+        self.start('vb6Studio.command("nativeGroup")')
+        self.page.get_by_role('button', name='Remove from Group', exact=True).click()
+        self.button('Cancel'); self.result(False)
+        self.assertEqual(self.js('JSON.stringify(vb6Studio.project)'), before)
+        self.start('vb6Studio.command("nativeGroup")')
+        self.page.get_by_role('button', name='Remove from Group', exact=True).click()
+        self.button('OK'); self.result(True)
+        self.assertEqual(self.js('vb6Studio.project.name'), 'B')
+        self.assertEqual(self.js('vb6Studio.project.nativeWorkspace.order'), ['B.vbp'])
+        self.assertIn(b'retain removed edit', self.export()['A.bas'])
+        self.js('() => vb6Studio.command("undo")')
+        self.assertEqual(self.js('vb6Studio.project.nativeWorkspace.order'), ['A.vbp', 'B.vbp'])
+        self.assertIn(b'retain removed edit', self.export()['A.bas'])
+        self.js('() => vb6Studio.command("redo")')
+        self.assertEqual(self.js('vb6Studio.project.nativeWorkspace.order'), ['B.vbp'])
+
+    def case_group_undo_cannot_erase_newer_peer_edits(self):
+        self.load(self.simple_group(), 'Suite.vbg')
+        self.start('vb6Studio.command("nativeGroup")')
+        self.page.get_by_label('Project manifest path', exact=True).fill('new/A.vbp')
+        self.page.get_by_role('button', name='Apply Path', exact=True).click()
+        self.button('OK'); self.result(True)
+        self.page.get_by_label('Active project in group', exact=True).select_option('B.vbp')
+        self.edit('vb6Studio.project.description="Later B edit"')
+        self.page.get_by_label('Active project in group', exact=True).select_option('new/A.vbp')
+        self.start('vb6Studio.command("undo")')
+        self.page.locator('.ide-modal-cover').last.get_by_text('B has later or discarded history', exact=False).wait_for()
+        self.button('OK')
+        self.assertEqual(self.js('vb6Studio.project.nativeWorkspace.order'), ['new/A.vbp', 'B.vbp'])
+        self.assertEqual(self.js('vb6Studio.project.nativeWorkspace.peers[0].description'), 'Later B edit')
+        self.page.get_by_label('Active project in group', exact=True).select_option('B.vbp')
+        self.js('() => vb6Studio.command("undo")')
+        self.page.get_by_label('Active project in group', exact=True).select_option('new/A.vbp')
+        self.js('() => vb6Studio.command("undo")')
+        self.assertEqual(self.js('vb6Studio.project.nativeWorkspace.order'), ['A.vbp', 'B.vbp'])
+
+    def case_stale_group_dialog_rejects_without_losing_edits(self):
+        self.load(self.simple_group(), 'Suite.vbg')
+        self.start('vb6Studio.command("nativeGroup")')
+        self.page.get_by_label('Startup project', exact=True).select_option('B.vbp')
+        self.edit('vb6Studio.project.description="Newer while dialog open"')
+        self.button('OK')
+        self.page.get_by_text('Project changed while the group dialog was open.', exact=False).wait_for()
+        self.button('OK'); self.button('Cancel'); self.result(False)
+        self.assertEqual(self.js('vb6Studio.project.description'), 'Newer while dialog open')
+        self.assertEqual(self.js('vb6Studio.project.nativeWorkspace.startupPath'), 'A.vbp')
+
+    def case_group_dependency_diagnostics_ui(self):
+        files = self.simple_group()
+        files['A.vbp'] += b'Reference=*\\AB.vbp\r\n'
+        self.load(files, 'Suite.vbg'); self.start('vb6Studio.command("nativeGroup")')
+        self.assertIn('B.vbp → A.vbp', self.page.get_by_label('Project dependency order', exact=True).inner_text())
+        self.button('Cancel'); self.result(False)
+        files['B.vbp'] += b'Reference=*\\AA.vbp\r\n'
+        self.load(files, 'Suite.vbg'); self.start('vb6Studio.command("nativeGroup")')
+        self.assertIn('Circular project reference', self.page.get_by_label('Project dependency order', exact=True).inner_text())
+        self.button('Cancel'); self.result(False)
+
+    def case_add_existing_merges_resource_strings_and_references(self):
+        self.load()
+        self.assertTrue(self.js(r'''async () => {
+            const A=VB6Studio.StudioAPI;
+            vb6Studio.project.resources=A.setResourceString({fileName:'app/Strings.res',entries:[]},1,'Current');
+            const other=A.newProject('Other');other.modules=[{id:'merge-module',name:'Extra',kind:'module',code:'Option Explicit',sourcePath:'Extra.bas'}];other.startup='Sub Main';
+            other.references=[{kind:'Reference',value:'*\\G{SECOND}#1.0#0#C:\\library.dll#Library'}];
+            other.resources=A.setResourceString({fileName:'Other.res',entries:[]},2,'Incoming');
+            return await vb6Studio.importProjectEntries(new Map([['Other.vb6web',JSON.stringify(other)]]),{interactive:false,add:true});
+        }'''))
+        self.assertEqual(self.js('vb6Studio.project.references.length'), 2)
+        strings = self.js('''() => {const r=vb6Studio.project.resources.entries.find(e=>e.type===6);const b=Uint8Array.from(atob(r.data),c=>c.charCodeAt(0)),v=new DataView(b.buffer),out=[];let at=0;for(let slot=0;slot<16;slot++){const n=v.getUint16(at,true);at+=2;out.push(new TextDecoder('utf-16le').decode(b.subarray(at,at+n*2)));at+=n*2;}return out;}''')
+        self.assertEqual(strings[1:3], ['Current', 'Incoming'])
+        self.assertIn('app/Strings.res', self.export())
+
     def case_failed_save_prevents_discard(self):
         self.load(); self.edit('vb6Studio.project.modules[1].code+="\\n\' 日本語"')
         self.start('vb6Studio.confirmDiscard()'); self.button('Save')

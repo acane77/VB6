@@ -48,6 +48,8 @@ These guides describe the implemented system, not complete native VB6 parity.
   property accessors, exact optional defaults, binary layouts and dispatch boundaries.
 - [Native-first VB.NET output and support policies](VBNET-NATIVE-FIRST.md).
 - [Compiler/runtime](COMPILER-RUNTIME.md) and [scalar/Variant semantics](SCALAR-COMPATIBILITY.md).
+- [Portable runtime intrinsics and file I/O](RUNTIME-INTRINSICS.md): random state, formatting,
+  character conversion, project settings, file metadata and TextStream contracts.
 - [Source debugger](DEBUGGER.md), [extended debugger contracts](DEBUGGER-COMPATIBILITY.md),
   [native break lifecycle](NATIVE-DEBUGGER-BREAK-LIFECYCLE.md) and
   [preview lifecycle](NATIVE-PREVIEW-LIFECYCLE.md).
@@ -82,8 +84,6 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [HTML retention and designer measurements](HTML-RENDERING-PERFORMANCE.md): DOM identity, read-before-write batching and browser validation.
 - [UI rendering backends](RENDERING.md): settings, native islands, lifecycle,
   performance measurement and strict acceptance; [rendering source attribution](RENDERING-SOURCES.md).
-- [Rendering resource contracts](RENDERING-RESOURCES.md): atlas lifetime, partial uploads,
-  rounded paint, text fidelity, suspension and exact browser qualification.
 - [GPU startup and recovery](RENDERING-TROUBLESHOOTING.md): adapter/context failures,
   live diagnostics, saved-policy retry and environment limitations.
 - [IDE themes](IDE-THEMES.md), [application themes](APPLICATION-THEMES.md) and
@@ -188,3 +188,11 @@ No proprietary fonts, icons or runtime binaries are redistributed.
 [INTELLIGENT-UI.md](INTELLIGENT-UI.md) documents the reusable streaming UI library,
 MCP tools and App resource, coding-agent conversation rendering, permission
 boundaries, standalone packaging, and integration validation.
+
+## Shared infrastructure
+
+- [Core primitives](CORE-PRIMITIVES.md): event and timer lifetimes, transactional history, UI document ownership, DOM/download helpers and streaming artifact integrity.
+
+## Application graphics
+
+[Retained browser graphics](GRAPHICS.md): drawing API, VB semantics, resource budgets, backend behavior, validation and compatibility boundaries.

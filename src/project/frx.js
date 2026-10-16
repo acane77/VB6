@@ -4,7 +4,8 @@ import {decodeNativeBytes,encodeNativeText,bytesOf} from './native-text.js';
 export const MAX_RESOURCE_BYTES=20*1024*1024;
 const fail=message=>{throw new VBError('FRX: '+message,1002);};
 export function cleanProjectPath(path){
-  path=String(path).replace(/\\/g,'/');if(!path||path.length>4096||/^[\/]|:|[\x00-\x1f]/i.test(path))fail('unsafe project path: '+path);
+  if(typeof path!=='string')fail('project path must be a string');
+  path=path.replace(/\\/g,'/');if(!path||path.length>4096||/^[\/]|:|[\x00-\x1f]/i.test(path))fail('unsafe project path: '+path);
   const out=[];for(const part of path.split('/')){if(!part||part==='.')continue;if(part==='..'){if(!out.length)fail('path escapes project root: '+path);out.pop();}else out.push(part);}if(!out.length)fail('empty project path');return out.join('/');
 }
 export function relativeProjectPath(fromFile,toFile){const a=cleanProjectPath(fromFile).split('/');a.pop();const b=cleanProjectPath(toFile).split('/');while(a.length&&b.length&&a[0].toLowerCase()===b[0].toLowerCase()){a.shift();b.shift();}return [...a.map(()=> '..'),...b].join('\\');}
@@ -15,7 +16,7 @@ export function resolveProjectPath(paths,owner,reference,{basenameFallback=false
   if(matches.length>1)fail('ambiguous case-insensitive file: '+candidate);if(matches.length)return matches[0];
   if(basenameFallback){const base=String(reference).replace(/\\/g,'/').split('/').at(-1).toLowerCase(),found=names.filter(n=>n.split('/').at(-1).toLowerCase()===base);if(found.length>1)fail('ambiguous file name: '+reference);return found[0]||null;}return null;
 }
-export function fromBase64(data){if(typeof data!=='string'||data.length>MAX_RESOURCE_BYTES*4/3+8)fail('invalid or oversized base64 resource');let binary;try{binary=atob(data);}catch{fail('invalid base64');}return Uint8Array.from(binary,c=>c.charCodeAt(0));}
+export function fromBase64(data){if(typeof data!=='string'||data.length>MAX_RESOURCE_BYTES*4/3+8)fail('invalid or oversized base64 resource');let binary;try{binary=atob(data);}catch{fail('invalid base64');}if(binary.length>MAX_RESOURCE_BYTES)fail('resource exceeds 20 MiB limit');return Uint8Array.from(binary,c=>c.charCodeAt(0));}
 export function toBase64(bytes){if(bytes.length>MAX_RESOURCE_BYTES)fail('resource exceeds 20 MiB limit');let result='';for(let at=0;at<bytes.length;at+=8192)result+=String.fromCharCode(...bytes.subarray(at,at+8192));return btoa(result);}
 function view(bytes){return new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);}
 function range(bytes,offset,length){if(!Number.isInteger(offset)||!Number.isInteger(length)||offset<0||length<0||offset+length>bytes.length)fail('truncated record or out-of-range offset');}

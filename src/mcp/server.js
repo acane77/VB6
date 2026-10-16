@@ -1,12 +1,23 @@
-import {McpTasks, TASK_EXTENSION, requireTasks} from './tasks.js';
-import {randomToken, MCP_VERSION, MCP_LIMIT, MCP_VERSIONS, MCP_LEGACY_VERSIONS, MCP_META, McpError, checkMessage, errorResponse, isRecord, checkAbort, validateArguments, validateHeaders, pageItems, awaitAbort, utf8Length} from './protocol.js';
+import {SKILLS_EXTENSION} from './skill-catalog.js';
+import {McpCatalogPages} from './catalog-pages.js';
+import {formatToolResult} from './tool-result.js';
+import {McpTasks, TASK_EXTENSION, DEFAULT_TASK_TOOLS, requireTasks} from './tasks.js';
+import {randomToken, MCP_VERSION, MCP_LIMIT, MCP_VERSIONS, MCP_LEGACY_VERSIONS, MCP_META, McpError, checkMessage, errorResponse, isRecord, checkAbort, validateArguments, validateHeaders, awaitAbort, utf8Length} from './protocol.js';
+
+const catalogOrder = (a, b) => {
+  const key = value => [value.name || value.uri || value.uriTemplate || '', value.uri || value.uriTemplate || ''];
+  const x = key(a), y = key(b);
+  return x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : 0;
+};
 
 /** MCP server reusable with a browser IDE, a headless adapter, MessagePort, stdio or HTTP. */
 export class McpServer {
-  constructor(adapter, {name = 'vb6-studio', version = '0.6.0', taskTools = ['vb6.agent.wait']} = {}) {
+  constructor(adapter, {name = 'vb6-studio', version = '0.7.0', taskTools = DEFAULT_TASK_TOOLS} = {}) {
     this.closed = false; this.adapter = adapter; this.info = {name, version}; this.sessions = new Map(); this.active = new Map(); this.listeners = new Set();
     this.tools = new Map(adapter.tools.map(tool => [tool.name, tool]));
     this.taskTools = new Set(taskTools);
+    this.catalogPages = new McpCatalogPages();
+    this.catalogLifetime = new AbortController(); this.catalogDirty = false; this.catalogRefresh = null;
     this.tasks = new McpTasks({changed: (task, principal) => {
       for (const listener of this.listeners) if (listener.principal === principal && listener.filter.taskIds?.includes(task.taskId))
         this.emit(listener, {jsonrpc: '2.0', method: 'notifications/tasks', params: {...task, ...listener.meta}});
@@ -14,34 +25,49 @@ export class McpServer {
     this.disposeChange = adapter.onChange?.(change => this.changed(change));
   }
   capabilities(modern = false) {
-    return {tools: {listChanged: true}, resources: {listChanged: true, ...(!modern ? {subscribe: true} : {})}, prompts: {listChanged: true}, completions: {}, ...(modern ? {extensions: {[TASK_EXTENSION]: {}}} : {logging: {}})};
+    return {tools: {listChanged: true}, resources: {listChanged: true, ...(!modern ? {subscribe: true} : {})}, prompts: {listChanged: true}, completions: {}, ...(modern ? {extensions: {[TASK_EXTENSION]: {}, ...(this.adapter.skills ? {[SKILLS_EXTENSION]: {directoryRead:true}} : {})}} : {logging: {}})};
   }
   emit(listener, message) {
     try { Promise.resolve(listener.emit(message)).catch(() => this.listeners.delete(listener)); }
     catch { this.listeners.delete(listener); }
   }
-  async catalogStamp() {
-    return {tools: JSON.stringify(this.adapter.tools.map(({execute, ...tool}) => tool)),
-      prompts: JSON.stringify((this.adapter.prompts || []).map(({get, ...prompt}) => prompt)),
-      resources: JSON.stringify(await this.adapter.resources?.() || [])};
+  async catalogStamp(context = {}) {
+    const sorted = items => [...items].sort(catalogOrder);
+    return {tools: JSON.stringify(sorted(this.adapter.tools.map(({execute, ...tool}) => tool))),
+      prompts: JSON.stringify(sorted((this.adapter.prompts || []).map(({get, ...prompt}) => prompt))),
+      resources: JSON.stringify({resources: sorted(await this.adapter.resources?.(context) || []), templates: sorted(this.adapter.templates || [])})};
   }
   changed(change = {}) {
-    // Compare catalogs, not revisions: typing changes resource contents, not the
-    // resource list. Failures in one transport cannot break another subscriber.
     for (const listener of this.listeners) {
       if (this.adapter.enabled === false || listener.legacy && !this.sessions.get(listener.sessionKey)?.ready) continue;
-        for (const uri of listener.filter.resourceSubscriptions || []) if (!change.uris || change.uris.includes(uri))
-          this.emit(listener, {jsonrpc: '2.0', method: 'notifications/resources/updated', params: {uri, ...listener.meta}});
-      listener.pending = (listener.pending || Promise.resolve()).then(async () => {
-        if (!this.listeners.has(listener) || this.adapter.enabled === false) return;
-        const stamp = await this.catalogStamp();
-        if (!this.listeners.has(listener) || this.adapter.enabled === false) return;
-        for (const type of ['tools', 'prompts', 'resources']) if (listener.filter[type + 'ListChanged'] && listener.stamp?.[type] !== stamp[type])
-          this.emit(listener, {jsonrpc: '2.0', method: 'notifications/' + type + '/list_changed', params: listener.meta});
-        listener.stamp = stamp;
-        this.tools = new Map(this.adapter.tools.map(tool => [tool.name, tool]));
-      }).catch(() => {});
+      for (const uri of listener.filter.resourceSubscriptions || []) if (!change.uris || change.uris.includes(uri))
+        this.emit(listener, {jsonrpc: '2.0', method: 'notifications/resources/updated', params: {uri, ...listener.meta}});
     }
+    // One coalesced refresh per authenticated principal, not an unbounded promise
+    // chain for every keystroke and every subscriber. Never reuse private catalogs
+    // across different callers. Changes during an async read schedule one more pass.
+    this.catalogDirty = true;
+    if (this.catalogRefresh || this.closed) return;
+    const signal = this.catalogLifetime.signal;
+    const refresh = Promise.resolve().then(async () => {
+      while (this.catalogDirty && !signal.aborted) {
+        this.catalogDirty = false;
+        if (this.adapter.enabled === false) break;
+        const listeners = [...this.listeners].filter(listener => !listener.legacy || this.sessions.get(listener.sessionKey)?.ready);
+        const stamps = new Map();
+        for (const listener of listeners) if (!stamps.has(listener.principal))
+          stamps.set(listener.principal, this.catalogStamp({principal: listener.principal, sessionKey: listener.sessionKey, signal}).catch(() => null));
+        await Promise.all(listeners.map(async listener => {
+          const stamp = await awaitAbort(stamps.get(listener.principal), signal);
+          if (!stamp || signal.aborted || !this.listeners.has(listener) || this.adapter.enabled === false) return;
+          for (const type of ['tools', 'prompts', 'resources']) if (listener.filter[type + 'ListChanged'] && listener.stamp?.[type] !== stamp[type])
+            this.emit(listener, {jsonrpc: '2.0', method: 'notifications/' + type + '/list_changed', params: listener.meta});
+          listener.stamp = stamp;
+        }));
+      }
+    });
+    this.catalogRefresh = refresh;
+    refresh.catch(() => {}).finally(() => { if (this.catalogRefresh === refresh) this.catalogRefresh = null; });
   }
   revokePrincipal(principal) {
     if (!principal) return;
@@ -50,14 +76,14 @@ export class McpServer {
     for (const [id,request] of this.active) if (request.principal===principal) { request.controller.abort(); this.active.delete(id); }
     for (const [key,session] of this.sessions) if (session.principal===principal) this.closeSession(key);
     for (const listener of this.listeners) if (listener.principal===principal) this.listeners.delete(listener);
-    this.tasks.clear(principal); this.adapter.revokePrincipal?.(principal);
+    this.catalogPages.clear(principal); this.tasks.clear(principal); this.adapter.revokePrincipal?.(principal);
   }
   closeSession(key) {
     this.sessions.delete(key);
     for (const [id, request] of this.active) if (request.sessionKey === key) { request.controller.abort(); this.active.delete(id); }
     for (const listener of this.listeners) if (listener.sessionKey === key) this.listeners.delete(listener);
   }
-  revoke() { this.tasks.clear(); this.adapter.revokeArtifacts?.(); for (const request of this.active.values()) request.controller.abort(); this.active.clear(); this.sessions.clear(); this.listeners.clear(); }
+  revoke() { this.catalogLifetime.abort(); this.catalogLifetime = new AbortController(); this.catalogRefresh = null; this.catalogDirty = false; this.catalogPages.clear(); this.tasks.clear(); this.adapter.revokeArtifacts?.(); for (const request of this.active.values()) request.controller.abort(); this.active.clear(); this.sessions.clear(); this.listeners.clear(); }
   close() { if(this.closed)return; this.closed=true; this.revoke(); this.disposeChange?.(); }
   async dispatch(message, context = {}) {
     let kind;
@@ -118,7 +144,7 @@ export class McpServer {
         if (this.sessions.size >= 64) throw new McpError(-32000, 'Too many MCP sessions.');
         if (typeof params.protocolVersion !== 'string' || !isRecord(params.capabilities) || !isRecord(params.clientInfo)) throw new McpError(-32602, 'Invalid initialize parameters.');
         const selected = MCP_LEGACY_VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : MCP_LEGACY_VERSIONS[0];
-        const stamp = await awaitAbort(this.catalogStamp(), ctx.signal); checkAbort(ctx.signal);
+        const stamp = await awaitAbort(this.catalogStamp(ctx), ctx.signal); checkAbort(ctx.signal);
         if (this.sessions.has(sessionKey)) throw new McpError(-32600, 'This session is already initialized.');
         if (this.sessions.size >= 64) throw new McpError(-32000, 'Too many MCP sessions.');
         this.sessions.set(sessionKey, {principal:ctx.principal||sessionKey, version: selected, ready: false, subscriptions: new Set(), clientInfo: params.clientInfo});
@@ -132,7 +158,7 @@ export class McpServer {
       }
       checkAbort(ctx.signal);
       if (modern) {
-        const cacheable = ['server/discover','tools/list','prompts/list','resources/list','resources/templates/list','resources/read'].includes(message.method);
+        const cacheable = ['server/discover','tools/list','prompts/list','resources/list','resources/templates/list','resources/read','skills/list','skills/get','resources/directory/read'].includes(message.method);
         result = {...result, resultType: result.resultType || 'complete', ...(cacheable ? {ttlMs: 0, cacheScope: 'private'} : {}), _meta: {...result._meta, [MCP_META + 'serverInfo']: this.info}};
       }
       if (utf8Length(JSON.stringify({jsonrpc: '2.0', id: message.id, result})) > MCP_LIMIT) throw new McpError(-32000, 'MCP result exceeds the 8 MiB message limit; read smaller source ranges.');
@@ -149,27 +175,37 @@ export class McpServer {
     finally { context.signal?.removeEventListener('abort', abort); if (this.active.get(key)?.controller === controller) this.active.delete(key); }
   }
   async handle(method, params, context, modern, session) {
-    const paginate = (items, field) => { items = [...items].sort((a, b) => { const x = a.name || a.uri || a.uriTemplate || '', y = b.name || b.uri || b.uriTemplate || ''; return x < y ? -1 : x > y ? 1 : 0; }); const page = pageItems(items, params.cursor); return {[field]: page.items, ...(page.nextCursor ? {nextCursor: page.nextCursor} : {})}; };
+    const paginate = async (load, field, kind = field) => {
+      const authority = this.adapter.authoritySignal;
+      let page;
+      if (params.cursor !== undefined) page = this.catalogPages.read(params.cursor, kind, context, authority);
+      else {
+        const items = [...await load()]; checkAbort(context.signal);
+        items.sort(catalogOrder);
+        page = this.catalogPages.create(items, kind, context, authority);
+      }
+      return {[field]: page.items, ...(page.nextCursor ? {nextCursor: page.nextCursor} : {})};
+    };
     switch (method) {
-      case 'tools/list': this.tools = new Map(this.adapter.tools.map(tool => [tool.name, tool])); return paginate([...this.tools.values()].map(({execute, ...tool}) => tool), 'tools');
+      case 'tools/list': this.tools = new Map(this.adapter.tools.map(tool => [tool.name, tool])); return paginate(() => [...this.tools.values()].map(({execute, ...tool}) => tool), 'tools');
       case 'tools/call': {
         const tool = this.tools.get(params.name); if (!tool) throw new McpError(-32602, 'Unknown tool: ' + params.name);
         const args = params.arguments === undefined ? {} : params.arguments;
         validateArguments(args, tool.inputSchema);
+        const complete = result => modern ? {...result,resultType:'complete',_meta:{...result._meta,[MCP_META+'serverInfo']:this.info}} : result;
         const run = async ctx => {
           try {
             ctx.reportProgress?.(0, 1, 'Starting ' + tool.name);
             const output = await tool.execute(args, ctx); checkAbort(ctx.signal);
-            const data = isRecord(output) ? output : {value: output};
-            if (tool.outputSchema) { try { validateArguments(data, tool.outputSchema, 'result'); } catch { throw new McpError(-32603, 'Tool output does not match its outputSchema.'); } }
+            const result = formatToolResult(output, {outputSchema: tool.outputSchema, modern, version: session?.version});
             ctx.reportProgress?.(1, 1, 'Completed ' + tool.name);
-            return {content: [{type: 'text', text: JSON.stringify(data, null, 2)}], structuredContent: data, isError: false};
+            return complete(result);
           } catch (error) {
             if (ctx.signal?.aborted || error instanceof McpError) throw error;
-            return {content: [{type: 'text', text: String(error.message || error).slice(0, 2000)}], isError: true};
+            return complete({content: [{type: 'text', text: String(error.message || error).slice(0, 2000)}], isError: true});
           }
         };
-        if (modern && this.taskTools.has(tool.name) && isRecord(params._meta?.[MCP_META + 'clientCapabilities']?.extensions?.[TASK_EXTENSION])) {
+        if (modern && tool.annotations?.readOnlyHint === true && this.taskTools.has(tool.name) && isRecord(params._meta?.[MCP_META + 'clientCapabilities']?.extensions?.[TASK_EXTENSION])) {
           const handle = this.tasks.create(run, context, this.adapter.authoritySignal, {toolName:tool.name});
           context.createdTaskId = handle.taskId;
           return handle;
@@ -183,15 +219,26 @@ export class McpServer {
         if (method === 'tasks/cancel') return this.tasks.cancel(params.taskId, context);
         return this.tasks.update(params.taskId, params.inputResponses, context);
       }
-      case 'resources/list': return paginate(await this.adapter.resources(), 'resources');
-      case 'resources/templates/list': return paginate(this.adapter.templates || [], 'resourceTemplates');
+      case 'skills/list':
+        if (!modern || !this.adapter.skills) throw new McpError(-32601,'Skills extension is unavailable.');
+        return paginate(() => this.adapter.skills.list(context), 'skills');
+      case 'skills/get':
+        if (!modern || !this.adapter.skills) throw new McpError(-32601,'Skills extension is unavailable.');
+        return {skill:await this.adapter.skills.get(params.uri,context)};
+      case 'resources/directory/read':
+        if (!modern || !this.adapter.skills) throw new McpError(-32601,'Skill directory reads are unavailable.');
+        if (typeof params.uri !== 'string' || params.uri.length > 4096) throw new McpError(-32602,'A directory URI is required.');
+        return paginate(() => this.adapter.skills.directory(params.uri,context), 'resources', 'directory:'+params.uri);
+      case 'resources/list': return paginate(() => this.adapter.resources(context), 'resources');
+      case 'resources/templates/list': return paginate(() => this.adapter.templates || [], 'resourceTemplates');
       case 'resources/read':
         if (typeof params.uri !== 'string') throw new McpError(-32602, 'A resource URI is required.');
         return {contents: await this.adapter.readResource(params.uri, context)};
-      case 'prompts/list': return paginate((this.adapter.prompts || []).map(({get, ...prompt}) => prompt), 'prompts');
+      case 'prompts/list': return paginate(() => (this.adapter.prompts || []).map(({get, ...prompt}) => prompt), 'prompts');
       case 'prompts/get': {
         const prompt = this.adapter.prompts?.find(p => p.name === params.name); if (!prompt) throw new McpError(-32602, 'Unknown prompt.');
         if (params.arguments !== undefined && !isRecord(params.arguments)) throw new McpError(-32602, 'Prompt arguments must be an object.');
+        for (const key of Object.keys(params.arguments || {})) if (!(prompt.arguments || []).some(arg => arg.name === key)) throw new McpError(-32602,'Unexpected prompt argument: '+key);
         for (const value of Object.values(params.arguments || {})) if (typeof value !== 'string') throw new McpError(-32602, 'Prompt argument values must be strings.');
         for (const arg of prompt.arguments || []) if (arg.required && typeof params.arguments?.[arg.name] !== 'string') throw new McpError(-32602, 'Missing prompt argument: ' + arg.name);
         return prompt.get(params.arguments || {}, context);
@@ -209,7 +256,7 @@ export class McpServer {
         if (method === 'resources/subscribe') session.subscriptions.add(params.uri); else session.subscriptions.delete(params.uri);
         let listener = [...this.listeners].find(l => l.sessionKey === context.sessionKey && l.legacy);
         if (!listener) {
-          const stamp = await awaitAbort(this.catalogStamp(), context.signal); checkAbort(context.signal);
+          const stamp = await awaitAbort(this.catalogStamp(context), context.signal); checkAbort(context.signal);
           listener = {stamp, principal:context.principal||context.sessionKey, sessionKey:context.sessionKey,
             legacy:true, emit:context.notify||context.emit, meta:{}, filter:{resourceSubscriptions:[]}};
           this.listeners.add(listener);
@@ -234,7 +281,7 @@ export class McpServer {
           for (const uri of requested.resourceSubscriptions) await this.adapter.readResource(uri, context);
           filter.resourceSubscriptions = [...new Set(requested.resourceSubscriptions)];
         }
-        const stamp = await this.catalogStamp(); checkAbort(context.signal);
+        const stamp = await this.catalogStamp(context); checkAbort(context.signal);
         const meta = {_meta: {[MCP_META + 'subscriptionId']: context.requestId}}, listener = {stamp, principal: this.tasks.principal(context), sessionKey: context.sessionKey, filter, emit: context.emit, meta};
         context.emit({jsonrpc: '2.0', method: 'notifications/subscriptions/acknowledged', params: {notifications: filter, ...meta}});
         this.listeners.add(listener);

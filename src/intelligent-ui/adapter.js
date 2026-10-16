@@ -1,3 +1,4 @@
+import {withToolContent} from '../mcp/tool-result.js';
 import {UIReferenceProviders} from '../../packages/intelligent-ui/src/reference-providers.js';
 import {McpUIService,MCP_UI_META,MCP_UI_URI,UI_TOOL_SCHEMAS,UI_TOOL_REQUIRED,UI_TOOL_DESCRIPTIONS} from '../../packages/intelligent-ui/src/mcp.js';
 import {McpError,checkAbort} from '../mcp/protocol.js';
@@ -19,7 +20,7 @@ export function installIntelligentUITools(adapter,{tool}){
   const api={service,referenceProviders,onChange(fn){listeners.add(fn);return()=>listeners.delete(fn);},ensureWorkspace(){if(epoch!==adapter.workspaceEpoch){service.clear();referenceProviders.cancelAll();epoch=adapter.workspaceEpoch;}}};
   adapter.intelligentUI=api;
   for(const method of Object.keys(UI_TOOL_SCHEMAS)){
-    tool('vb6.ui.'+method,UI_TOOL_DESCRIPTIONS[method],UI_TOOL_SCHEMAS[method],UI_TOOL_REQUIRED[method],(args,context)=>{api.ensureWorkspace();const result=service.run(method,args,context);return method==='catalog'?{...result,referenceProviders:referenceProviders.list()}:result;});
+    tool('vb6.ui.'+method,UI_TOOL_DESCRIPTIONS[method],UI_TOOL_SCHEMAS[method],UI_TOOL_REQUIRED[method],(args,context)=>{api.ensureWorkspace();const result=service.run(method,args,context);if(method==='catalog')return {...result,referenceProviders:referenceProviders.list()};return ['present','update','read'].includes(method)&&typeof result.fallbackMarkdown==='string'?withToolContent(result,{content:[{type:'text',text:result.fallbackMarkdown}],_meta:MCP_UI_META}):result;});
     const descriptor=adapter.tools.at(-1);descriptor.annotations.idempotentHint=['catalog','read','list'].includes(method);
     if(['present','update','read'].includes(method))descriptor._meta=MCP_UI_META;
   }
@@ -32,7 +33,7 @@ export function installIntelligentUITools(adapter,{tool}){
     const id='host-ref-'+(++referenceSequence);service.publishReference(id,reference,context);return {id,reference};
   },{open:true});
   const resources=adapter.resources.bind(adapter),readResource=adapter.readResource.bind(adapter);
-  adapter.resources=async()=>[...await resources(),...service.resources()];
+  adapter.resources=async context=>[...await resources(context),...service.resources()];
   adapter.readResource=async(uri,context={})=>{if(uri!==MCP_UI_URI)return readResource(uri,context);adapter.assertEnabled();checkAbort(context.signal);service.resourceHtml=resourceHtml;return service.readResource(uri);};
   const revoke=adapter.revokePrincipal?.bind(adapter),revokeAll=adapter.revokeArtifacts?.bind(adapter),dispose=adapter.dispose.bind(adapter);
   adapter.revokePrincipal=owner=>{referenceProviders.revoke(owner);service.revoke(owner);return revoke?.(owner);};

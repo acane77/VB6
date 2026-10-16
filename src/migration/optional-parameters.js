@@ -1,3 +1,4 @@
+import {returnType} from './array-returns.js';
 import {scalarType, unbox} from '../runtime/values.js';
 import {key, identifier, vbString} from './names.js';
 
@@ -86,7 +87,7 @@ export function emitOptionalOverloads(writer, procedure, context, {name=procedur
     const accepted = procedure.params.slice(0, length);
     const header = (contract ? '' : scope) + optionalOverloadModifier(procedure, context, contract) + (returns ? 'Function ' : 'Sub ') + identifier(name) + '(' +
       accepted.map(p => parameter({...p, optional:false}, context)).join(', ') + ')' +
-      (returns ? ' As ' + context.netType(procedure.returnType) : '') + (contract ? '' : implementation);
+      (returns ? ' As ' + returnType(procedure, context) : '') + (contract ? '' : implementation);
     if (contract) { writer.line(header, context); continue; }
     writer.open(header, context);
     // Explicit local storage for omitted defaults prevents accidental ByRef

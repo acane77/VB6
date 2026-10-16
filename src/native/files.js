@@ -5,20 +5,33 @@
  */
 import {planNativeArguments} from './call-plan.js';
 import {nativePrintImage} from './print.js';
+import {nativeWriteImage} from './file-write.js';
+import {nativeReadText,nativeReadLine,nativeReadField} from './file-input.js';
 import {mem32} from './x86-operands.js';
 const P='native:file:',key=v=>String(v).toLowerCase(),at=(base,displacement=0)=>mem32({base,displacement});
 const local=o=>at('ebp',o.offset),arg=argument=>({argument}),lit=value=>({kind:'literal',value});
-export const NATIVE_FILE_SLOT_BYTES=32;
+export const NATIVE_FILE_SLOT_BYTES=64;
 export function useNativeFiles(c){if(!c.nativeFilesUsed){c.nativeFilesUsed=true;c.slot(P+'table');}}
 function save(c,name){const s=c.arrayWorkspace(4,name);c.x.mov(local(s),'eax');return s;}
+const fileTypes=Object.freeze({freefile:'integer',eof:'boolean',lof:'long',loc:'long',seek:'long',fileattr:'long',input:'string'});
 export function nativeFileType(c,node){
-  const callee=node.kind==='call'?node.callee:node;
-  return callee.kind==='id'&&key(callee.name)==='freefile'&&!c.variable(callee)&&!c.resolveProcedure(callee)?'integer':null;
+  const callee=node.kind==='call'?node.callee:node,name=key(callee.name).replace(/\$$/,'');
+  return callee.kind==='id'&&Object.hasOwn(fileTypes,name)&&!c.variable(callee)&&!c.resolveProcedure(callee)?fileTypes[name]:null;
 }
 export function nativeFileBuiltin(c,node,name){
-  if(name!=='freefile'||c.resolveProcedure(node.callee))return false;
-  const plan=planNativeArguments({name:'FreeFile',params:[{name:'rangenumber',optional:true}]},node.args,m=>c.fail(m));
-  c.numeric(plan.slots[0].omitted?lit(0):plan.slots[0].node);useNativeFiles(c);c.x.push().call(P+'free');return true;
+  if(!Object.hasOwn(fileTypes,name)||c.resolveProcedure(node.callee))return false;
+  useNativeFiles(c);const x=c.x;
+  const params=name==='freefile'?[{name:'rangenumber',optional:true}]:name==='input'?[{name:'number'},{name:'filenumber'}]:name==='fileattr'?[{name:'filenumber'},{name:'returntype',optional:true}]:[{name:'filenumber'}];
+  const plan=planNativeArguments({name,params},node.args,m=>c.fail(m)),slots=[];
+  for(const field of plan.order){c.numeric(field.omitted?lit(name==='freefile'?0:1):field.node);slots[field.index]=save(c,'file-argument');}
+  if(name==='freefile'){x.push(arg(slots[0].offset)).call(P+'free');return true;}
+  x.push(arg(slots[name==='input'?1:0].offset)).call(P+'resolve');const entry=save(c,'file-builtin-entry');
+  if(name==='input'){
+    x.mov('eax',at('eax',12)).push().push(arg(entry.offset)).call(P+'require-input');
+    nativeReadText(c,c.nativeKernelValue(arg(entry.offset)),c.nativeKernelValue(arg(slots[0].offset)));return true;
+  }
+  if(name==='fileattr')x.push(arg(slots[1].offset));
+  x.push(arg(entry.offset)).call(P+({lof:'length',seek:'seek-position',fileattr:'attr'}[name]||name));return true;
 }
 export function nativeFileInstruction(c,ins){
   const x=c.x;
@@ -29,26 +42,42 @@ export function nativeFileInstruction(c,ins){
     // an attached native debugger instead of silently discarding Debug.Print.
     x.push().invoke('kernel32.dll','OutputDebugStringW').value(arg(image.position.offset)).store(c.nativeDebugColumn);return true;
   }
-  if(!['fileOpen','fileClose','filePrint'].includes(ins.op))return false;
+  if(!['fileOpen','fileClose','filePrint','fileSeek','fileInput'].includes(ins.op))return false;
   useNativeFiles(c);
   if(ins.op==='fileOpen'){
-    if(!['output','append'].includes(ins.mode))c.fail('Native sequential Open currently lowers Output and Append, not '+ins.mode);
-    if(ins.access&&ins.access!=='write')c.fail('Native Output/Append requires Write access');
+    if(!['input','output','append'].includes(ins.mode))c.fail('Native sequential Open currently lowers Input, Output and Append, not '+ins.mode);
+    if(ins.access&&ins.access!==(ins.mode==='input'?'read':'write'))c.fail('Native Input requires Read access; Output/Append requires Write access');
     c.textExpression(ins.path);const path=save(c,'file-path');c.numeric(ins.handle);const number=save(c,'file-number');
-    c.numeric(ins.recordLength||lit(512));x.compare(1).branch('l','error:5').compare(32767).branch('g','error:5');
+    c.numeric(ins.recordLength||lit(512));x.compare(1).branch('l','error:5').compare(32767).branch('g','error:5');const length=save(c,'file-buffer-length');
     const sharing={shared:3,'lock read':2,'lock write':1,'lock read write':0}[ins.sharing]??0;
-    x.push(sharing).push(ins.mode==='append'?2:1).push(arg(number.offset)).push(arg(path.offset)).call(P+'open');return true;
+    x.push(arg(length.offset)).push(sharing).push({output:1,append:2,input:3}[ins.mode]).push(arg(number.offset)).push(arg(path.offset)).call(P+'open');return true;
   }
   if(ins.op==='fileClose'){
     if(!ins.handles.length)x.call(P+'close-all');
     else for(const handle of ins.handles){c.numeric(handle);x.push().call(P+'close');}
     return true;
   }
-  if(ins.csv)c.fail('Native Write # serialization is not yet lowered; use Print # for display text');
   c.numeric(ins.handle);x.push().call(P+'resolve');const entry=save(c,'file-entry');
   x.mov('eax',at('eax',12));const generation=save(c,'file-generation');
+  if(ins.op==='fileSeek'){
+    c.numeric(ins.position);x.push().push(arg(generation.offset)).push(arg(entry.offset)).call(P+'seek-to');return true;
+  }
+  if(ins.op==='fileInput'){
+    for(const target of ins.targets){
+      const variable=c.variable(target);
+      const types=ins.whole?{string:8,variant:12}:{byte:17,integer:2,long:3,single:4,double:5,currency:6,date:7,boolean:11,string:8,variant:12};
+      if(!variable||variable.nativeArray&&!variable.elementOf||variable.recordFieldArray||!Object.hasOwn(types,key(variable.type)))c.fail('Native Input requires a supported scalar variable/element (Line Input: String or Variant)');
+      const pin=c.address(variable),destination=save(c,'file-input-destination');
+      x.push(arg(generation.offset)).push(arg(entry.offset)).call(P+'require-input');
+      if(ins.whole)nativeReadLine(c,c.nativeKernelValue(arg(entry.offset)));
+      else nativeReadField(c,c.nativeKernelValue(arg(entry.offset)),lit(types[key(variable.type)]));
+      const value=save(c,'file-input-value'),alias={type:variable.type,fixedLength:variable.fixedLength,nativeInlineString:variable.nativeInlineString,nativeKernelPointer:arg(destination.offset)};
+      c.storageExpression(alias,c.nativeKernelValue(arg(value.offset),ins.whole?'string':'variant'));c.store(alias);c.releaseArrayPin(pin);
+    }
+    return true;
+  }
   x.mov('eax',local(entry)).mov('eax',at('eax',16));const column=save(c,'file-column');
-  const image=nativePrintImage(c,ins,arg(column.offset));
+  const image=ins.csv?nativeWriteImage(c,ins):nativePrintImage(c,ins,arg(column.offset));
   const ansi=c.temporaryString();c.nativeConvertString(ansi,'to-ansi');const buffer=save(c,'file-bytes');
   x.push(arg(image.position.offset)).push(arg(buffer.offset)).push(arg(generation.offset)).push(arg(entry.offset)).call(P+'write');return true;
 }

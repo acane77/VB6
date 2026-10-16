@@ -71,3 +71,5 @@ test('all-unchanged saves still validate every observed file',async()=>{
   assert.equal(plan.entries.length,0);dir.files.delete('M.bas');
   await assert.rejects(()=>writeNativeDirectory(plan),/nothing was written/);assert.equal(dir.writes.length,0);
 });
+
+test('native folder path collisions fail before creating any directory or file',async()=>{const dir=new MemoryDirectory();for(const files of [{'a':'x','a/b':'y'},{'a/b':'x','A':'y'}])await assert.rejects(()=>planNativeDirectoryWrite(dir,files),/File\/directory/);assert.equal(dir.files.size,0);assert.equal(dir.dirs.size,1);assert.equal(dir.writes.length,0);});

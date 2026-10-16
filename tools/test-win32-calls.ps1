@@ -20,7 +20,11 @@ public static class NativeCallWindowsProbe {
 }
 $path = (Resolve-Path $Directory).Path
 $reports = @()
-foreach ($program in @('AotCalls','AotCallProperties')) {
+$programs = @()
+foreach ($family in @('AotCalls','AotCallProperties')) {
+ foreach ($level in 0..2) {$programs += "$family-O$level"}
+}
+foreach ($program in $programs) {
  $report = [ordered]@{ok=$false;program=$program;platform=[Environment]::OSVersion.VersionString;hostArchitecture=$env:PROCESSOR_ARCHITECTURE;executableArchitecture='x86';checks=@()}
  $clean = Join-Path ([IO.Path]::GetTempPath()) ('vb6-calls-'+[Guid]::NewGuid().ToString('N'))
  $process = [Diagnostics.Process]::new()

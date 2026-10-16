@@ -72,7 +72,7 @@ test('MCP: JSON response reader bounds payload bytes and validates envelopes', a
 });
 for (const era of ['modern','legacy']) test('MCP: ' + era + ' discovery, tools, resources, prompts and completion', async t => {
   const {adapter, client} = setup(t, {era}); await client.connect(); assert.equal(adapter.enabled, false); await assert.rejects(client.listTools(), error => error.code === -32001); adapter.setEnabled(true);
-  assert.equal((await client.listTools()).length, adapter.tools.length); assert.equal((await client.listResources()).length, (await adapter.resources()).length); assert.equal((await client.listResourceTemplates()).length, 2); assert.equal((await client.listPrompts()).length, 2);
+  assert.equal((await client.listTools()).length, adapter.tools.length); assert.equal((await client.listResources()).length, (await adapter.resources()).length); assert.equal((await client.listResourceTemplates()).length, 5); assert.equal((await client.listPrompts()).length, 2);
   assert.match((await client.readResource('vb6://module/Form1/source')).contents[0].text, /Option Explicit/);
   assert.ok((await client.getPrompt('explain-module', {module: 'Form1'})).messages[0].content.text.includes('Option Explicit'));
   assert.deepEqual((await client.complete({type: 'ref/prompt', name: 'explain-module'}, {name: 'module', value: 'Fo'})).completion.values, ['Form1']);

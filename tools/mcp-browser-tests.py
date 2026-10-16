@@ -67,6 +67,12 @@ def exercise(browser,mode,info):
         tab(page,'Capabilities')
         page.get_by_label('Capability type',exact=True).select_option('Resources');page.get_by_label('Exposed agent tools').locator('option').nth(2).wait_for(state='attached')
         page.get_by_label('Capability type',exact=True).select_option('Prompts');check(page.get_by_label('Exposed agent tools').locator('option').count()==2)
+        page.get_by_label('Capability type',exact=True).select_option('Resource templates')
+        page.wait_for_function("document.querySelector('[aria-label=\"Exposed agent tools\"]').options.length===5")
+        page.get_by_label('Capability type',exact=True).select_option('Skills')
+        page.wait_for_function("document.querySelector('[aria-label=\"Exposed agent tools\"]').options.length===6")
+        check(page.get_by_label('Exposed agent tools').locator('option').all_text_contents()[0].find('skill://vb6/')>=0)
+        check(not page.evaluate('vb6Studio.mcp.adapter.enabled'),'Reading skill manifests must not enable sharing')
         page.get_by_label('Capability type',exact=True).select_option('Tools')
         tab(page,'Agent access')
         page.get_by_label('Enable MCP sharing',exact=True).check()
@@ -80,7 +86,7 @@ def exercise(browser,mode,info):
             check(page.get_by_label('Companion owner token',exact=True).input_value()=='')
         peer=info if network else None
         tab(page,'Capabilities')
-        check(page.get_by_label('Exposed agent tools').locator('option').count()==125)
+        check(page.get_by_label('Exposed agent tools').locator('option').count()==132)
         page.get_by_label('Filter exposed agent tools').fill('debug.assign')
         check(page.get_by_label('Exposed agent tools').locator('option').count()==1)
         check('pauseId' in page.get_by_label('Agent tool schema').inner_text())
@@ -150,7 +156,7 @@ def exercise(browser,mode,info):
             check(not page.evaluate('vb6Studio.mcp.adapter.enabled || vb6Studio.mcp.bridge'))
         # Only app static assets and explicitly paired loopback relay requests are allowed.
         if network:check(all(url.startswith((info['url'],info['hosted'].rsplit('/VB6/',1)[0],info['httpsHosted'].rsplit('/VB6/',1)[0])) for url in requests),str(requests))
-        return {'tools':125,'serverOnly':True,'approval':'deny/allow/revoke','runtime':'paused/evaluate/stop','network':network,'detachedWindow':detached,'reload':network}
+        return {'tools':132,'serverOnly':True,'approval':'deny/allow/revoke','runtime':'paused/evaluate/stop','network':network,'detachedWindow':detached,'reload':network}
     finally:context.close()
 
 fixture = None

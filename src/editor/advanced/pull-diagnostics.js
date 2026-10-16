@@ -1,3 +1,5 @@
+import {WorkspaceDiagnostics} from './workspace-diagnostics.js';
+
 /** Debounced document-diagnostic pulling for servers that do not push markers.
  * LSP 3.17 full/unchanged reports and related documents use captured document
  * identities and versions. Cancellation never erases a newer result. */
@@ -5,6 +7,7 @@ export class PullDiagnostics {
   constructor(client,{delay=200,maxConcurrent=2,onError=()=>{}}={}) {
     this.client=client;this.delay=delay;this.maxConcurrent=Math.max(1,maxConcurrent);this.onError=onError;
     this.states=new Map();this.queue=new Set();this.running=0;this.disposed=false;
+    this.workspace=new WorkspaceDiagnostics(client,{delay,onError});
     this.listeners=[
       client.on('document',event=>{
         if(event.kind==='close'){this.remove(event.uri);this.invalidateDependents();return;}
@@ -18,7 +21,7 @@ export class PullDiagnostics {
   }
   supported(uri) {
     const document=this.client.documents.get(uri);
-    return this.client.state==='ready'&&document&&this.client.capability('textDocument/diagnostic',document);
+    return !this.workspace.capability(document)&&this.client.state==='ready'&&document&&this.client.capability('textDocument/diagnostic',document);
   }
   invalidateDependents(except) {
     for(const [uri]of this.client.documents)if(uri!==except&&this.supported(uri)?.interFileDependencies)this.schedule(uri);
@@ -52,7 +55,7 @@ export class PullDiagnostics {
       // establish which snapshots those ranges refer to.
       const snapshots=new Map([...this.client.documents].map(([key,doc])=>[key,{document:doc,version:doc.version}]));
       const current=()=>!this.disposed&&!abort.signal.aborted&&this.states.get(uri)===state&&generation===state.generation&&this.client.documents.get(uri)===document&&document.version===version;
-      this.client.request('textDocument/diagnostic',{textDocument:{uri},...(capability.identifier?{identifier:capability.identifier}:{}),...(state.result?.resultId?{previousResultId:state.result.resultId}:{})},{signal:abort.signal}).then(report=>{
+      this.client.request('textDocument/diagnostic',{textDocument:{uri},...(capability.identifier?{identifier:capability.identifier}:{}),...(typeof state.result?.resultId==='string'?{previousResultId:state.result.resultId}:{})},{signal:abort.signal}).then(report=>{
         if(!current())return;
         if(capability.interFileDependencies&&(snapshots.size!==this.client.documents.size||[...snapshots].some(([key,s])=>this.client.documents.get(key)!==s.document||s.document.version!==s.version)))return;
         this.accept(uri,report,version);
@@ -91,7 +94,7 @@ export class PullDiagnostics {
     state.retries=0;this.client.emit('diagnostics',{uri,version,diagnostics:state.result.items});
   }
   dispose() {
-    if(this.disposed)return;this.disposed=true;for(const uri of [...this.states.keys()])this.remove(uri);
+    if(this.disposed)return;this.disposed=true;this.workspace.dispose();for(const uri of [...this.states.keys()])this.remove(uri);
     for(const unlisten of this.listeners)unlisten();this.listeners=[];
   }
 }

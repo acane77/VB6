@@ -1,3 +1,5 @@
+import {emitStatementAdapters} from './statement-boundaries.js';
+import {returnDeclaration, returnType as procedureReturnType} from './array-returns.js';
 import {emitCallAdapters} from './call-order.js';
 import {optionalOverloadModifier, declarationParameters, emitOptionalOverloads} from './optional-parameters.js';
 import {emitFileAdapters} from './file-records.js';
@@ -65,7 +67,7 @@ function procedureBody(writer,context) {
   context.directReturn=context.options.codeStyle==='native'&&canReturnDirectly(proc)&&!context.representations.opaque;
   if(!context.directReturn&&(proc.kind==='function'||proc.accessor==='get')){
     context.aliases.set(key(proc.name),'__vbResult');
-    writer.line('Dim __vbResult As '+context.netType(proc.returnType)+' = '+defaultValue({type:proc.returnType,bounds:null},context));
+    writer.line('Dim __vbResult As '+procedureReturnType(proc,context)+' = '+defaultValue(returnDeclaration(proc),context));
   }
   if(proc.code.some(op=>op.op==='gosub'||op.op==='gosubReturn'||op.op==='computedJump'&&op.gosub))writer.line('Dim __vbReturns As New Global.System.Collections.Generic.Stack(Of Integer)()');
   for(const decl of context.locals.values())if(!decl.parameter){
@@ -79,13 +81,13 @@ function procedureBody(writer,context) {
 }
 function emitProperty(writer,group,state,module,{contract=false}={}) {
   const get=group.find(p=>p.accessor==='get'),set=group.find(p=>p.accessor==='let')||group.find(p=>p.accessor==='set'),proc=get||set,context=createContext(state,module,proc);
-  const value=set?.params.at(-1),params=get?get.params:set.params.slice(0,-1),returnType=get?.returnType||value?.type||'Variant';
+  const value=set?.params.at(-1),params=get?get.params:set.params.slice(0,-1);
   if(propertyPlan(module,proc.name,context)?.methods){
     for(const accessor of group){
       const scope=contract?'':accessor.scope==='private'?'Private ':accessor.scope==='friend'?'Friend ':'Public ';
       const name=accessorName(accessor.name,accessor.accessor),reader=accessor.accessor==='get';
       const body=createContext(state,module,accessor);
-      const header=scope+optionalOverloadModifier(accessor,body,contract)+(reader?'Function ':'Sub ')+identifier(name)+'('+declarationParameters(accessor,body).map(p=>parameter(p,body)).join(', ')+')'+(reader?' As '+body.netType(accessor.returnType):'')+(contract?'':implementation(accessor,body,name));
+      const header=scope+optionalOverloadModifier(accessor,body,contract)+(reader?'Function ':'Sub ')+identifier(name)+'('+declarationParameters(accessor,body).map(p=>parameter(p,body)).join(', ')+')'+(reader?' As '+procedureReturnType(accessor,body):'')+(contract?'':implementation(accessor,body,name));
       if(contract)writer.line(header,body);
       else{writer.open(header,body);procedureBody(writer,body);writer.close(reader?'End Function':'End Sub');writer.line();}
       emitOptionalOverloads(writer,accessor,body,{name,contract,scope,implementation:contract?'':implementation(accessor,body,name),parameter});
@@ -93,17 +95,16 @@ function emitProperty(writer,group,state,module,{contract=false}={}) {
     return;
   }
   if(group.filter(p=>p.accessor!=='get').length>1)context.add('MIG_DUAL_PROPERTY_SET','Property Let and Property Set share a name; .NET has one setter, so an object/value-dispatch adapter is required.');
-  const prefix=(contract?'':proc.scope==='private'?'Private ':'Public ')+(module.defaultMember===key(proc.name)?'Default ':'')+(get&&!set?'ReadOnly ':!get&&set?'WriteOnly ':'');
-  const header=prefix+'Property '+identifier(proc.name)+(params.length?'('+params.map(p=>parameter({...p,byRef:false},context)).join(', ')+')':'')+' As '+context.netType(returnType)+(contract?'':implementation(proc,context));
+  const prefix=(contract?'':proc.scope==='private'?'Private ':'Public ')+(module.defaultMember===key(proc.name)&&params.length?'Default ':'')+(get&&!set?'ReadOnly ':!get&&set?'WriteOnly ':'');
+  const header=prefix+'Property '+identifier(proc.name)+(params.length?'('+params.map(p=>parameter({...p,byRef:false},context)).join(', ')+')':'')+' As '+procedureReturnType(get||{returnType:value?.type,returnArray:value?.bounds!=null},context)+(contract?'':implementation(proc,context));
   if(params.some(p=>p.byRef))context.add('MIG_PROPERTY_BYREF','VB.NET indexed properties use ByVal index arguments; VB6 ByRef index mutation requires accessor-method lowering.');
-  if(module.defaultMember===key(proc.name)&&!params.length)context.add('MIG_PARAMETERLESS_DEFAULT','VB.NET default properties require parameters; a VB6 parameterless default member needs explicit call-site expansion.');
   if(contract){writer.line(header);return;}
   writer.open(header,context);
   if(get){writer.open('Get');procedureBody(writer,createContext(state,module,get));writer.close('End Get');}
   if(set){
     const setter=createContext(state,module,set);setter.aliases.set(key(value.name),'value');
     for(let i=0;i<params.length;i++)setter.aliases.set(key(set.params[i].name),identifier(params[i].name));
-    writer.open('Set(value As '+context.netType(returnType)+')');procedureBody(writer,setter);writer.close('End Set');
+    writer.open('Set(value As '+procedureReturnType(get||{returnType:value?.type,returnArray:value?.bounds!=null},context)+')');procedureBody(writer,setter);writer.close('End Set');
   }
   writer.close('End Property');writer.line();
 }
@@ -128,7 +129,7 @@ function field(writer,decl,context) {
   }else writer.line(variable(decl,context),{source:context.source,line:decl.line||1});
 }
 export function emitModule(state,module,path) {
-  state={...state,generatedFile:path,fileAdapters:new Map(),callAdapters:new Map()};
+  state={...state,generatedFile:path,fileAdapters:new Map(),callAdapters:new Map(),statementAdapters:new Map()};
   const writer=new CodeWriter(path),context=createContext(state,module);
   writer.line('Option Explicit On');writer.line('Option Strict '+(state.options.strict?'On':'Off'));writer.line('Option Infer On');writer.line('Option Compare '+(module.optionCompare==='text'?'Text':'Binary'));
   writer.line('Imports System');writer.line('Imports Microsoft.VisualBasic');
@@ -136,13 +137,12 @@ export function emitModule(state,module,path) {
   // Generated identifiers are reserved only within converted modules, never
   // changed silently when the source already uses this prefix.
   if(/\b__vb\w*/i.test(module.source))context.add('MIG_GENERATED_NAME','Source uses the reserved migration identifier prefix __vb; rename it or supply a naming adapter.');
-  if(module.defaultMember&&[...module.procedures.values()].some(p=>key(p.name)===key(module.defaultMember)&&p.kind!=='property'))context.add('MIG_DEFAULT_METHOD','VB6 default methods require explicit default-property or call-site lowering.');
   if(module.kind!=='module'&&module.kind!=='class'&&module.kind!=='form')context.add('MIG_MODULE_KIND','Unsupported module kind '+module.kind);
   if(state.interfaces.has(key(module.name))){
     writer.open('Public Interface '+identifier('I'+module.name));
     for(const decl of module.declarations.filter(d=>d.scope==='public'&&!d.constant))writer.line('Property '+identifier(decl.name)+' As '+declarationType(decl,context));
     for(const proc of publicMembers(module).filter(p=>p.kind!=='property')){
-      writer.line(optionalOverloadModifier(proc,context,true)+(proc.kind==='function'?'Function ':'Sub ')+identifier(proc.name)+'('+declarationParameters(proc,context).map(p=>parameter(p,context)).join(', ')+')'+(proc.kind==='function'?' As '+context.netType(proc.returnType):''));
+      writer.line(optionalOverloadModifier(proc,context,true)+(proc.kind==='function'?'Function ':'Sub ')+identifier(proc.name)+'('+declarationParameters(proc,context).map(p=>parameter(p,context)).join(', ')+')'+(proc.kind==='function'?' As '+procedureReturnType(proc,context):''));
       emitOptionalOverloads(writer,proc,context,{contract:true,parameter});
     }
     for(const group of propertyGroups(module).values())if(group[0].scope==='public')emitProperty(writer,group,state,module,{contract:true});
@@ -168,7 +168,7 @@ export function emitModule(state,module,path) {
     if(constructor)header='Public Sub New()';
     else if(dispose){c.add('MIG_DETERMINISTIC_LIFETIME','Class_Terminate is emitted as IDisposable.Dispose; COM reference-counted destruction requires an explicit ownership migration.');header='Public Sub Dispose() Implements Global.System.IDisposable.Dispose';}
     else{
-      header=(proc.scope==='public'?'Public ':proc.scope==='friend'?'Friend ':'Private ')+optionalOverloadModifier(proc,c)+(proc.kind==='function'?'Function ':'Sub ')+identifier(proc.name)+'('+declarationParameters(proc,c).map(p=>parameter(p,c)).join(', ')+')'+(proc.kind==='function'?' As '+c.netType(proc.returnType):'')+implementation(proc,c);
+      header=(proc.scope==='public'?'Public ':proc.scope==='friend'?'Friend ':'Private ')+optionalOverloadModifier(proc,c)+(proc.kind==='function'?'Function ':'Sub ')+identifier(proc.name)+'('+declarationParameters(proc,c).map(p=>parameter(p,c)).join(', ')+')'+(proc.kind==='function'?' As '+procedureReturnType(proc,c):'')+implementation(proc,c);
       const source=module.declarations.find(d=>d.withEvents&&key(proc.name).startsWith(key(d.name)+'_'));
       if(source){const event=proc.name.slice(source.name.length+1);header+=' Handles '+identifier(source.name)+'.'+identifier(event);}
     }
@@ -179,6 +179,7 @@ export function emitModule(state,module,path) {
   if(!state.directEntry&&state.entry?.kind==='main'&&key(state.entry.module)===key(module.name)){writer.open('Friend Sub __vbStart()');writer.line('[Main]()');writer.close('End Sub');}
   emitFileAdapters(writer,context);
   emitCallAdapters(writer,context);
+  emitStatementAdapters(writer,context);
   writer.close(module.kind==='module'?'End Module':'End Class');
   return finishRuntimeImports(writer,context);
 }

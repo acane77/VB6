@@ -38,6 +38,16 @@ class RunnerTests(unittest.TestCase):
         for engine in run.ENGINES:
             t=next(t for t in run.plan('authoring-exports',engine,'http') if t['script']=='browser-designer-tests.py')
             self.assertEqual(t['argv'][-4:],['--browser',engine,'--origin','http'])
+    def test_runtime_intrinsics_have_one_ci_owner_and_real_http_transport(self):
+        groups=json.loads((run.ROOT/'tools/ci/suites.json').read_text())
+        owners=[group for group,scripts in groups.items() if 'browser-compiler-runtime.py' in scripts]
+        self.assertEqual(owners,['core-runtime'])
+        for origin in ('http','memory'):
+            task=next(t for t in run.plan('core-runtime','chromium',origin) if t['script']=='browser-compiler-runtime.py')
+            self.assertEqual('--http' in task['argv'],origin=='http')
+            self.assertEqual(task['transport'],origin)
+        with self.assertRaisesRegex(ValueError,'HTTP or memory'):
+            run.plan('core-runtime','chromium','file')
     def test_paths_duplicates_and_empty_groups_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);(root/'tools/ci').mkdir(parents=True)

@@ -105,10 +105,22 @@ String references get zero-initialized owned BSTR slots. The callee may replace
 the BSTR; the caller releases the resulting allocation after the call, or during
 error cleanup if argument evaluation or the callee fails. String function results
 are retained independently before these temporary references are destroyed.
-Fixed-length String sources can be read into an explicitly grouped value copy,
-but fixed-length String **copy-back to project procedures** is still unsupported. Parenthesized
-whole-array values cannot alias a typed array parameter; a value boxed into a
-supported Variant parameter is instead an independently owned snapshot.
+Fixed-length scalar Strings and inline UDT String fields now use an owned
+variable-length bridge for project `ByRef As String` and `ByRef As Variant`
+parameters. The original address is captured once, including indexed fields;
+SAFEARRAY element storage stays pinned until the call completes. On normal return,
+copy-back pads/truncates through the original fixed-width assignment path. Multiple
+fixed arguments have separate snapshots and commit in source evaluation order.
+A propagated error or failed later argument discards the bridge; grouped values
+never copy back. A Variant formal retains String coercion through a borrowed
+VT_BYREF | VT_BSTR view of the bridge, so assigning Null still raises error 94.
+String function returns become owned before any allocating copy-back begins.
+
+This adaptation is distinct from variable-length scalar ByRef aliases, whose
+writes remain immediate. Whole fixed-String arrays and parenthesized whole-array
+values are not passed through this scalar adapter. A value boxed into a supported
+Variant parameter is instead an independently owned snapshot. The Windows call
+matrix executes both maintained fixture families at O0/O1/O2.
 
 ## Explicit native pointer/value overrides
 

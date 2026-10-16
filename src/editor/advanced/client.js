@@ -29,7 +29,7 @@ export function languageClientCapabilities() {
     workspace:{applyEdit:true,workspaceEdit:{documentChanges:true,failureHandling:'transactional',changeAnnotationSupport:{groupsOnLabel:true}},workspaceFolders:true,configuration:true,
       executeCommand:dynamic,
       symbol:{...dynamic,symbolKind:{valueSet:Array.from({length:26},(_,i)=>i+1)}},
-      semanticTokens:{refreshSupport:true},inlayHint:{refreshSupport:true},codeLens:{refreshSupport:true},diagnostics:{refreshSupport:true}},
+      semanticTokens:{refreshSupport:true},inlayHint:{refreshSupport:true},codeLens:{refreshSupport:true},diagnostics:{refreshSupport:true},inlineValue:{refreshSupport:true}},
     textDocument:{
       synchronization:{...dynamic,willSave:true,didSave:true,willSaveWaitUntil:false},
       completion:{...dynamic,contextSupport:true,completionItem:{snippetSupport:true,commitCharactersSupport:true,documentationFormat:['markdown','plaintext'],deprecatedSupport:true,preselectSupport:true,tagSupport:{valueSet:[1]},insertReplaceSupport:true,resolveSupport:{properties:['documentation','detail','additionalTextEdits','command']},insertTextModeSupport:{valueSet:[1,2]},labelDetailsSupport:true}},
@@ -44,8 +44,8 @@ export function languageClientCapabilities() {
       rename:{...dynamic,prepareSupport:true,prepareSupportDefaultBehavior:1,honorsChangeAnnotations:true},
       foldingRange:{...dynamic,lineFoldingOnly:true,foldingRangeKind:{valueSet:['comment','imports','region']}},
       // Hierarchies have owned modeless IDE tools, independent of Monaco's
-      // language-provider API. Inline values are not advertised without a UI.
-      callHierarchy:dynamic,typeHierarchy:dynamic,
+      // language-provider API. Inline values have an owned paused-frame UI.
+      callHierarchy:dynamic,typeHierarchy:dynamic,inlineValue:dynamic,
       selectionRange:dynamic,linkedEditingRange:dynamic,
       semanticTokens:{...dynamic,requests:{range:true,full:{delta:true}},tokenTypes,tokenModifiers,formats:['relative'],overlappingTokenSupport:false,multilineTokenSupport:false,serverCancelSupport:true,augmentsSyntaxTokens:true},
       inlayHint:{...dynamic,resolveSupport:{properties:['tooltip','textEdits','label.tooltip','label.location','label.command']}},
@@ -58,7 +58,7 @@ export function languageClientCapabilities() {
 
 function providerMethod(method) {
   if (method.startsWith('textDocument/semanticTokens/')) return 'textDocument/semanticTokens';
-  const alias = {'textDocument/prepareRename':'textDocument/rename','textDocument/colorPresentation':'textDocument/documentColor',
+  const alias = {'workspace/diagnostic':'textDocument/diagnostic','textDocument/prepareRename':'textDocument/rename','textDocument/colorPresentation':'textDocument/documentColor',
     'completionItem/resolve':'textDocument/completion','codeAction/resolve':'textDocument/codeAction','codeLens/resolve':'textDocument/codeLens',
     'documentLink/resolve':'textDocument/documentLink','inlayHint/resolve':'textDocument/inlayHint','workspaceSymbol/resolve':'workspace/symbol',
     'callHierarchy/incomingCalls':'textDocument/prepareCallHierarchy','callHierarchy/outgoingCalls':'textDocument/prepareCallHierarchy',
@@ -116,7 +116,7 @@ export class LanguageClient {
       for(const registration of p.unregisterations||p.unregistrations||[])this.registrations.delete(registration.id);
       this.emit('capabilities',this.capabilities);return null;
     });
-    for(const name of ['semanticTokens','inlayHint','codeLens','diagnostic'])this.peer.onRequest('workspace/'+name+'/refresh',()=>{this.emit('refresh',name);return null;});
+    for(const name of ['semanticTokens','inlayHint','codeLens','diagnostic','inlineValue'])this.peer.onRequest('workspace/'+name+'/refresh',()=>{this.emit('refresh',name);return null;});
     this.peer.onNotification('textDocument/publishDiagnostics',p=>{
       const document=this.documents.get(p.uri);
       if(!document||p.version!==undefined&&p.version!==document.version)return;

@@ -27,8 +27,6 @@ for(const mutate of [a=>delete a.stringABI,a=>a.stringABI=2,a=>delete a.globals[
 test('readback rejects corrupt UTF-16 units',()=>{const b=encodeStringBlock('x',{capacity:8});b[3]=65536;assert.throws(()=>decodeStringBlock(b,0,{capacity:8}),e=>e.code==='GPU_ABI');});
 
 for(const [declaration,argument,parameter] of [
-  ['Public fixedText As String * 3','fixedText','ByRef text As String'],
-  ['Public fixedText(1) As String * 3','fixedText(0)','ByRef text As String'],
   ['Public fixedText(1) As String * 3','fixedText','ByRef text() As String']
 ])test('fixed String ByRef copy-back is diagnosed: '+argument,()=>{
   assert.throws(()=>compileCompute(declaration+'\nSub Main()\nEdit '+argument+'\nEnd Sub\nSub Edit('+parameter+')\nEnd Sub'),e=>e.code==='GPU_FIXED_STRING_BYREF');

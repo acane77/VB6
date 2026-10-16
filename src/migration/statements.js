@@ -60,8 +60,8 @@ export function emitStatements(writer,context) {
       withStack.push([context.withReceiver,context.withSymbol,record]);
       if(record){
         if(symbol?.arrayElement||symbol?.procedure)context.add('MIG_WITH_RECORD_COPY','With on a returned record or array property requires a ByRef value-cell adapter.');
-        open('With '+e(node));context.withReceiver='';
-      }else{const temp='__vbWith'+context.temp++;line('Dim '+temp+' = '+e(node));context.withReceiver=temp;}
+        open('With '+expression(node,context,{reference:true}));context.withReceiver='';
+      }else{const temp='__vbWith'+context.temp++;line('Dim '+temp+' = '+expression(node,context,{reference:true}));context.withReceiver=temp;}
       context.withSymbol=symbol;return;
     }
     if(/^End\s+With$/i.test(text)){const previous=withStack.pop()||[];if(previous[2])close('End With');[context.withReceiver,context.withSymbol]=previous;return;}

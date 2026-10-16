@@ -1,3 +1,4 @@
+import {withToolContent} from './tool-result.js';
 import {sha256} from '../core/sha256.js';
 import {clone} from '../core/core.js';
 import {sourceFiles, workspaceProjects, selectWorkspaceProject} from '../project/formats.js';
@@ -26,7 +27,7 @@ export function installBuildTools(ide, adapter, {add, output, consent, commit, c
   const dispose = adapter.dispose.bind(adapter);
   adapter.dispose = () => { for (const id of artifacts.keys()) remove(id); observers.clear(); dispose(); };
   const find = (id, ctx) => { purge(); const item = artifacts.get(id); if (!item || item.owner !== owner(ctx)) throw new McpError(-32602, 'Build artifact not found or expired.'); return item; };
-  const metadata = item => ({artifactId: item.id, name: item.name, mimeType: item.mimeType, size: item.bytes.length, sha256: item.sha256, sourceRevision: item.sourceRevision, expiresAt: item.expiresAt});
+  const metadata = item => ({artifactId: item.id, manifestUri: 'vb6://build/' + item.id, name: item.name, mimeType: item.mimeType, size: item.bytes.length, sha256: item.sha256, sourceRevision: item.sourceRevision, expiresAt: item.expiresAt});
   add('build.targets', 'Describe build/export targets. Building returns inert bytes; desktop packaging and the licensed classic compiler require their local CLI.', {}, [], () => output({
     targets: [{id: 'project', format: 'JSON', extension: '.vb6web'}, {id: 'html', format: 'standalone application HTML', extension: '.html'},
       {id: 'sources', format: 'native source/project group ZIP', extension: '.zip'}, {id: 'win32', format: 'freestanding x86 PE32', extension: '.exe', graphics: 'native controls/GDI', compatibility: 'Existing native compiler subset; unsupported constructs return diagnostics.'}],
@@ -34,7 +35,7 @@ export function installBuildTools(ide, adapter, {add, output, consent, commit, c
     maxArtifactBytes: maxBytes, maxRetainedArtifacts: 8, ttlMs, chunkBytes: 262144
   }));
   add('build.create', 'Build an immutable project, HTML, source ZIP or native Win32 EXE artifact. Requires the snapshot revision; does not execute project code. Read its exact bytes in chunks with build.read.', {target: E(['project','html','sources','win32']), expectedRevision: REV}, ['target','expectedRevision'], async (args, ctx) => {
-    checkRevision(args.expectedRevision); checkAbort(ctx.signal); purge();
+    checkRevision(args.expectedRevision); checkAbort(ctx.signal); purge(); ctx.reportProgress?.(0.2,1,'Preparing build snapshot');
     const epoch = adapter.authorityEpoch, sourceRevision = adapter.revision, project = clone(ide.project);
     let data, report, mimeType, extension;
     if (args.target === 'win32') {
@@ -46,6 +47,7 @@ export function installBuildTools(ide, adapter, {add, output, consent, commit, c
     else { data = JSON.stringify(project, null, 2); extension = '.vb6web'; mimeType = 'application/json'; }
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data);
     if (bytes.length > maxBytes) throw new McpError(-32602, 'Build artifact exceeds 32 MiB.');
+    ctx.reportProgress?.(0.6,1,'Hashing build bytes');
     const digest = await sha256(bytes);
     checkAbort(ctx.signal); adapter.assertEnabled(); checkRevision(sourceRevision);
     if (epoch !== adapter.authorityEpoch) throw new McpError(-32602, 'Project changed during build.');
@@ -54,7 +56,9 @@ export function installBuildTools(ide, adapter, {add, output, consent, commit, c
     const id = randomToken(24), item = {id, bytes, owner: owner(ctx), epoch, sourceRevision, mimeType, name: project.name + extension,
       authority: adapter.authoritySignal, expiresAt: Date.now() + ttlMs, sha256: [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('')};
     item.revoke = () => remove(id); item.timer = setTimeout(item.revoke, ttlMs); item.timer.unref?.(); artifacts.set(id, item); item.authority.addEventListener('abort', item.revoke, {once: true}); notify();
-    return output({valid: true, artifact: metadata(item), ...(report ? {report} : {})});
+    ctx.onTaskDiscard?.(() => remove(id));
+    ctx.reportProgress?.(0.9,1,'Build artifact retained');
+    return withToolContent(output({valid: true, artifact: metadata(item), ...(report ? {report} : {})}), {content:[{type:'resource_link',uri:'vb6://build/'+id,name:item.name+' manifest',mimeType:'application/json',description:'Caller-owned immutable build manifest. Read byte ranges using its template or vb6.build.read; no program is executed.'}]});
   });
   adapter.tools.at(-1).annotations.idempotentHint = false;
   add('build.read', 'Read an immutable build artifact using zero-based byte offsets. Every response includes the complete-file SHA-256 and source revision.', {artifactId: S, offset: N(0, maxBytes), count: N(1, 262144)}, ['artifactId'], (args, ctx) => {

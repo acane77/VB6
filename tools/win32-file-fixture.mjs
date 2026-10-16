@@ -1,8 +1,9 @@
 /** Real sequential files. The oracle reads bytes through independent Win32 APIs,
  * never the compiler's file table, formatter or browser virtual filesystem. */
-export function nativeFileControlFixture(fixture){
-  const {add,check,finish}=fixture('AotControlSequentialFiles');
+export function nativeFileControlFixture(fixture,writeOnly=false){
+  const {add,check,finish}=fixture(writeOnly?'AotControlWriteFiles':'AotControlSequentialFiles');
   add('Dim f As Integer, n As Long, before As Long, after As Long, s As String, value As String, emptyValue As Variant');
+  if(!writeOnly){
   check('FreeFile=1 And FreeFile(0)=1 And FreeFile(rangenumber:=1)=256 And VarType(FreeFile)=vbInteger','FreeFile scans separate low/high ranges without reserving a number');
   add('f=FreeFile\nOpen "text.txt" For Output As #f Len=512\nPrint #f, "alpha";\nPrint #f, " beta"\nClose #f');
   check('FileEquals("text.txt","alpha beta" & vbCrLf)','Output writes real ANSI file bytes and trailing semicolon preserves the current line');
@@ -57,6 +58,28 @@ export function nativeFileControlFixture(fixture){
   add('n=GetProcessHandleCount(GetCurrentProcess(),before)\nFor n=1 To 40\n Open "text.txt" For Output Shared As #1\n On Error Resume Next\n Err.Clear\n Open ".\\text.txt" For Output Shared As #2\n Err.Clear\n On Error GoTo 0\n Close #1\nNext\nn=GetProcessHandleCount(GetCurrentProcess(),after)');
   check('after=before','successful close and duplicate-file error paths do not leak kernel handles');
   add('Open "text.txt" For Output As #1\nFor n=1 To 1000\n Print #1, "x";\nNext\nClose #1');check('FileEquals("text.txt",String$(1000,"x"))','repeated allocating Print statements retain bounded statement-owned strings');
+  }else{
+  add('Open "text.txt" For Output As #1\nWrite #1, "alpha", 7, -8, 1.25, True, False, emptyValue, Null, CVErr(23)\nClose #1');
+  check('FileEquals("text.txt",Chr$(34) & "alpha" & Chr$(34) & ",7,-8,1.25,#TRUE#,#FALSE#,,#NULL#,#ERROR 23#" & vbCrLf)','Write uses quoted text, invariant numbers and VB interchange Variant markers');
+  add('Open "text.txt" For Output As #1\nWrite #1, CByte(255), CInt(-32768), CLng(2147483647), CSng(1.5), CDbl(-1.5), CCur(12.3456), CDec("1234567890123456789012345678")\nClose #1');
+  check('FileEquals("text.txt","255,-32768,2147483647,1.5,-1.5,12.3456,1234567890123456789012345678" & vbCrLf)','Write retains all numeric Variant subtypes including exact Currency and 28-digit Decimal');
+  add('Open "text.txt" For Output As #1\nWrite #1, DateSerial(2024,2,29), TimeSerial(8,9,10), DateSerial(2024,2,29)+TimeSerial(8,9,10), CDate(0)\nClose #1');
+  check('FileEquals("text.txt","#2024-02-29#,#08:09:10#,#2024-02-29 08:09:10#,#00:00:00#" & vbCrLf)','Write emits universal date and time fields rather than the current Windows date format');
+  add('s="a," & Chr$(34) & "b" & ChrW$(0) & "c" & vbCrLf & "d"\nOpen "text.txt" For Output As #1\nWrite #1, s, ""\nWrite #1,\nClose #1');
+  check('FileEquals("text.txt",Chr$(34) & s & Chr$(34) & "," & Chr$(34) & Chr$(34) & vbCrLf & vbCrLf)','Write preserves embedded quotes and counted NUL/CRLF without inventing RFC 4180 escaping');
+  add('Open "text.txt" For Output As #1\nPrint #1, "prefix";\nWrite #1, "next"\nPrint #1, Tab(3); "end"\nClose #1');
+  check('FileEquals("text.txt","prefix" & Chr$(34) & "next" & Chr$(34) & vbCrLf & "  end" & vbCrLf)','Write appends at the current stream position and resets the next Print column');
+  add('sequence=0\nvalue="original"\nOpen "order.txt" For Output As #1\nWrite #1, value, Mutate(value), MarkText("a"), MarkText("b")\nClose #1');
+  check('sequence=44 And value="changed" And FileEquals("order.txt",Chr$(34) & "original" & Chr$(34) & "," & Chr$(34) & "tail" & Chr$(34) & "," & Chr$(34) & "a" & Chr$(34) & "," & Chr$(34) & "b" & Chr$(34) & vbCrLf)','Write evaluates each expression once in source order and snapshots earlier ByRef values');
+  add('On Error Resume Next\nErr.Clear\nsequence=0\nWrite #1, MarkText("unused")');
+  check('Err.Number=52 And sequence=0','Write validates the file number before evaluating field expressions');
+  add('Err.Clear\nOn Error GoTo 0\nOpen "order.txt" For Output As #1\nOn Error Resume Next\nErr.Clear\nWrite #1, "partial", 1/0');
+  check('Err.Number=11','Write propagates expression errors through the normal native On Error path');
+  add('Err.Clear\nClose #1\nOn Error GoTo 0');check('FileEquals("order.txt","")','Write does not publish a partially formatted record after an expression failure');
+  add('Open "order.txt" For Output As #1\nOn Error Resume Next\nErr.Clear\nWrite #1, ReopenTarget()');
+  check('Err.Number=52','Write detects a file slot closed and reused by a field expression');
+  add('Err.Clear\nClose #1\nOn Error GoTo 0');check('FileEquals("replacement.txt","")','Write cannot redirect a staged record to a replacement handle');
+  }
   add('Debug.Print "native debug output"; 7; Tab; "end"\nn=DeleteFileW(StrPtr("text.txt"))\nn=DeleteFileW(StrPtr("order.txt"))\nn=DeleteFileW(StrPtr("high.txt"))\nn=DeleteFileW(StrPtr("last.txt"))\nn=DeleteFileW(StrPtr("replacement.txt"))');
   return finish(`Private sequence As Long
 Private Declare Function CreateFileW Lib "kernel32" (ByVal name As Long, ByVal access As Long, ByVal share As Long, ByVal security As Long, ByVal creation As Long, ByVal flags As Long, ByVal template As Long) As Long
@@ -118,3 +141,5 @@ Private Function ReopenTarget() As String
  ReopenTarget="wrong receiver"
 End Function`);
 }
+
+export const nativeWriteFileFixture=fixture=>nativeFileControlFixture(fixture,true);

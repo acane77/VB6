@@ -7,7 +7,7 @@ sign-in, model sampling provider, or configured-process gateway in the IDE.
 
 Open **Tools → MCP Agent Access…**. The panel has five local administration tabs:
 **Agent access**, **Agent permissions**, **Capabilities** (a read-only tool/schema
-reference), **Activity**, and **Operations** (retained task/build handles). Nothing is shared automatically on startup.
+reference for tools, resources, templates, prompts and Skills), **Activity**, and **Operations** (retained task/build handles). Nothing is shared automatically on startup.
 
 ## Architecture and deployment
 
@@ -102,7 +102,7 @@ OAuth-protected MCP hosting service.
 
 ## Agent workflow and control surface
 
-The server exposes **125 structured tools**, resources, prompts, pagination,
+The server exposes **132 structured tools**, resources, prompts, pagination,
 subscriptions, cancellation and event-driven waiting. The complete tool reference
 and examples are in [MCP-AGENTS.md](MCP-AGENTS.md).
 
@@ -169,14 +169,16 @@ can be managed and detached windows can be returned through structured tools.
 | Legacy MCP | `2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05` session initialization/capabilities |
 | Agent transports | Streamable HTTP JSON/SSE through the companion; stdio via the external relay; explicitly paired private MessagePort |
 | Server features | Typed tools with output schemas, resources/templates, two source-review prompts, module-name completion, pagination, notifications/subscriptions and cancellation |
-| Tasks | Negotiated modern task handles for `vb6.agent.wait`, polling/update/cancel, opted-in notifications, expiry and authority-bound cleanup |
+| Tasks | Negotiated modern task handles for waits, compilation and inert builds; polling/update/cancel, opted-in notifications, expiry and authority-bound cleanup |
+| Skills | Standard `skills/list`, `skills/get`, `resources/directory/read`; six VB6 workflows with complete immutable SHA-256 manifests |
+| Rich results / Apps | Text, image, audio, embedded resources and resource links; JSON fallback and typed structured content; existing bounded Intelligent UI / MCP Apps resource |
 | Reliability | UTF-8 byte-bounded requests/results/queues, timeouts, strict UTF-8, duplicate-request checks, session cleanup and no automatic mutation replay |
 | Companion boundary | Loopback binding, Host/Origin checks, separate owner/client tokens, browser lease, no arbitrary process or remote-URL proxy |
 
-The server does not solicit model sampling or act as a model host. Tasks are
-implemented only for event-driven `vb6.agent.wait`, as described below. MCP Apps,
-Skills and provider-specific extensions are not implemented. This is
-not certification against every agent implementation. The local stdio entry is
+The server does not solicit model sampling or act as a model host. It implements
+the modern Tasks and Skills extensions and the existing Intelligent UI / MCP Apps
+resource, not every optional or provider-specific extension. This is not
+certification against every agent implementation. The local stdio entry is
 for an **external agent to reach this IDE**, not for the IDE to run another server.
 
 ## Classic dialog
@@ -191,7 +193,9 @@ The footer's **Stop sharing** is the explicit revocation action.
 Setup instructions and the credential-free agent configuration are expandable.
 **Agent permissions** exposes no preselected grants and disables authorization
 until sharing is enabled. **Capabilities** filters tools by name/description and
-scope, browses resources/prompts, and exports the schema catalog. **Activity** has a
+scope, browses resources/templates/prompts/Skills, and exports the schema catalog.
+The Skills view reads manifests only: selecting a skill neither loads its
+instructions nor grants permissions. Entries include their URI to disambiguate names. **Activity** has a
 filterable table, errors-only view, follow toggle and JSON export. Arguments and
 credentials are not logged; error summaries can contain project identifiers, so
 review activity before sharing it.
@@ -205,20 +209,29 @@ the server or retained operations. These owner controls are not MCP tools; there
 is no remote `tasks/list` endpoint or cross-client artifact inventory. Tabs wrap
 at narrow widths without overlapping their content.
 
-## Pollable waits and immutable build downloads
+## Pollable operations and immutable build downloads
 
 Modern clients that advertise `extensions: {"io.modelcontextprotocol/tasks": {}}`
 in their per-request client capabilities receive a task handle for
-`vb6.agent.wait`. Poll `tasks/get`, optionally subscribe with `taskIds` through
+`vb6.agent.wait`, `vb6.project.compile` and `vb6.build.create`. Without that
+capability these operations return ordinary inline results. Poll `tasks/get`,
+optionally subscribe with `taskIds` through
 `subscriptions/listen`, or cancel with `tasks/cancel`. `tasks/update` accepts an
-input-response object but these wait tasks never elicit or authorize changes;
-unknown/stale input keys have no effect. Tasks last at most 120 seconds, with at
-most 32 retained. Ordinary clients still receive a synchronous wait result.
+input-response object but these read-only operations never elicit or authorize
+changes; unknown/stale input keys have no effect. Tasks last at most 120 seconds,
+with at most 32 retained globally and 16 per authenticated principal. Results
+are copied and limited to 4 MiB each / 16 MiB total UTF-8; error data is separately
+limited to 64 KiB per task. Progress is monotone. A returned handle survives its
+initiating HTTP connection, but not authority revocation, server disposal or reload.
+Task results include the same complete result envelope as inline calls. Cancellation
+that wins after artifact allocation but before settlement releases the orphan artifact.
 No legacy experimental Tasks protocol or taskification of mutations is advertised.
 
 `vb6.build.create` produces inert project JSON, application HTML, native-source
 ZIP or an existing-compiler Win32 PE32. Supply the current `expectedRevision`,
-then use `vb6.build.read` with byte offsets and base64 chunks. Every chunk carries
+then use `vb6.build.read` with byte offsets and base64 chunks, or follow the
+returned resource link to its caller-owned manifest. A resource link is inert:
+it neither downloads bytes nor executes the artifact. Every chunk carries
 the full-file SHA-256, total byte size and snapshot revision. Unsupported native
 constructs return diagnostics, not a substitute executable. SHA-256 uses WebCrypto
 where available and a native-differential-tested JS fallback on plain HTTP.
@@ -242,6 +255,79 @@ members; `project.select` switches the active member with preserved IDE historie
 and `project.startup` updates the startup project with undo. Project switches
 revoke old project grants. Adding an entire group as loose modules is rejected;
 source/asset collisions do not silently overwrite existing companion data.
+
+## Stable catalog paging and typed results
+
+Tool, resource, template, prompt, skill and skill-directory lists use immutable
+serialized snapshots. Continue with the exact opaque `nextCursor`; never construct
+an offset or assume a page contains 100 entries. Pages stop at 100 entries **or**
+the byte budget. Cursors are bound to the transport principal, catalog/directory,
+workspace authority and a 60-second deadline. They can be retried without
+re-reading a changing project. Start a fresh list after `-32602` expiry/revocation.
+At most 64 snapshots / 16 MiB total are retained, with an eight-snapshot per-caller
+quota; oldest snapshots may be evicted. A single oversize catalog entry fails
+explicitly rather than being silently dropped. Change-notification catalog reads
+are coalesced per principal, not launched per keystroke or subscriber.
+
+Modern `structuredContent` preserves JSON objects, arrays, scalars and null.
+Older clients receive an object wrapper for non-object values and an inert text
+fallback for resource links predating `2025-06-18`. Rich content is opt-in host
+presentation metadata, not fields copied from untrusted project data. Every
+successful result also has a JSON text fallback. Output schemas are checked before
+a result leaves the server. UI presentations include readable fallback text and
+the existing `ui://vb6/intelligent-ui` metadata without changing in-process data.
+
+The dependency-free offline schema validator supports local JSON Pointer/anchor
+references, combinators, conditionals, deep enum/const/uniqueness, Unicode lengths,
+patterns, number bounds/multiples, object dependencies, tuples, contains and
+unevaluated-property/item assertions. It does not fetch schemas, mutate inputs or
+apply defaults. It is a bounded assertion implementation, **not a complete JSON
+Schema 2020-12 metaschema validator**: dynamic/recursive scopes and nested `$id`
+scopes fail explicitly; `format` is an annotation. Schemas and regular expressions
+must be trusted host-authored definitions. Remote tools cannot install schemas.
+
+## Standard Skills and resource ranges
+
+`server/discover` declares `io.modelcontextprotocol/skills` with `directoryRead`.
+`skills/list` and `skills/get` expose complete entries containing verbatim
+frontmatter, all file URIs, byte sizes and `sha256:` digests. The six built-ins are
+`inspect-project`, `edit-source`, `design-forms`, `debug-runtime`, `build-artifacts`
+and `inspect-data`, each rooted at `skill://vb6/<name>/SKILL.md` and accompanied
+by a safety reference. `resources/directory/read` lists direct children, including
+`inode/directory` subdirectories; it is not a recursive search. Skill files remain
+readable as ordinary resources by legacy clients. Unknown entries return `-32602`.
+
+A host verifies each file against the held manifest and applies its own explicit
+skill activation/approval policy. A resource read is **not activation**, a matching
+digest is not a trust anchor, and skill text cannot grant IDE permissions. The
+server publishes built-in workflows; it does not install remote skills, execute
+skill scripts or become an outbound MCP client. Trusted embedders may import
+`McpSkillCatalog` from `src/mcp/skill-catalog.js` and supply immutable definitions.
+
+Additional ranged resource templates are:
+
+```text
+vb6://module/{name}/source{?offset,count,revision}
+vb6://build/{artifactId}
+vb6://build/{artifactId}/bytes{?offset,count}
+```
+
+For source, start with `vb6://module/Form1/source?count=65536` and follow
+`contents[0]._meta["io.vb6/range"].nextUri`. Nonzero offsets require the captured
+revision. Offsets/counts are UTF-16 code units, so concatenate text ranges exactly;
+never apply byte offsets to source strings. Stale revisions fail rather than
+mixing different source snapshots. Unknown, duplicate and invalid query parameters
+are rejected. The old full-source resource remains available for compatibility.
+
+The build manifest is JSON metadata, **not the executable's bytes**. Its range
+resource returns base64 bytes with size, checksum, offset and continuation metadata.
+All reads dispatch through the same validated, permission-checked `code.read` and
+`build.read` tools, including embedded coding-agent policy and artifact ownership.
+Private artifacts are not added to the global resource catalog.
+
+Protocol references: [core tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools),
+[stable Tasks](https://github.com/modelcontextprotocol/ext-tasks/blob/main/specification/2026-07-28/tasks.md),
+[stable Skills](https://github.com/modelcontextprotocol/ext-skills/blob/main/specification/stable/skills.mdx).
 
 ## Trusted embedding API
 
@@ -348,7 +434,7 @@ unpublished task; a successfully returned task remains independent of its HTTP
 response lifetime. These are cooperative cancellation rules: they do not
 preempt synchronous JavaScript already executing in the browser.
 
-The IDE's separate API-key coding agents consume the same 125-tool adapter.
+The IDE's separate API-key coding agents consume the same 132-tool adapter.
 Their **data** grant authorizes public definition edits only; **code** or
 **workspace** grants do not imply it. Read-only runs expose definition reads,
 validation and bounded source reads, but not definition mutations. Built-in

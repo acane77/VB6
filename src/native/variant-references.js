@@ -1,6 +1,8 @@
+import {nativeFixedStringReference} from './fixed-string-references.js';
 /** Typed l-values bound to ByRef As Variant retain their original storage type.
  * A borrowed VT_BYREF view describes the real referent: writes are immediate,
- * checked Let-coercions, not a deferred copy-back that loses aliasing or errors.
+ * checked Let-coercions. Fixed Strings additionally require the explicit
+ * normal-return fixed-width adapter below; variable-length scalars alias directly.
  * https://learn.microsoft.com/en-us/openspecs/microsoft_general_purpose_programming_languages/ms-vbal/1fb9af32-fc48-4c4f-998a-ed8047048ca5
  */
 import {mem8,mem16,mem32} from './x86-operands.js';
@@ -11,8 +13,14 @@ const local=displacement=>at('ebp',displacement);
 export function nativeVariantReference(c,variable){
  const type=String(variable.type).toLowerCase(),vt=NATIVE_VARIANT_TYPES[type];
  if(variable.nativeArray&&!variable.elementOf)c.fail('Whole-array ByRef Variant arguments are not yet lowered; use a typed array parameter');
- if(variable.fixedLength)c.fail('Fixed-length String ByRef copy-back is not yet lowered; parenthesize to pass an isolated value');
  if(vt===undefined||variable.nativeRecord||variable.recordFieldArray)c.fail('Unsupported native ByRef Variant referent: '+variable.type);
+ if(variable.fixedLength){
+  const transfer=nativeFixedStringReference(c,variable),borrowed=c.arrayWorkspace(16,'fixed-string-variant-reference'),x=c.x;
+  // A borrowed VT_BSTR view preserves String coercion during Variant assignment;
+  // only its caller-owned String slot can be replaced, never the fixed referent.
+  x.push();c.zeroStorage(borrowed);c.rawStorageAddress(borrowed);x.popOperand('edx').mov(mem16({base:'eax'}),0x4008).mov(mem32({base:'eax',displacement:8}),'edx');
+  return {...transfer,borrowed};
+ }
  const pin=c.address(variable);if(type==='variant')return {pin};
  c.useVariant('assign');const x=c.x,reference=c.arrayWorkspace(16,'byref-variant-view');
  x.push();c.zeroStorage(reference);c.rawStorageAddress(reference);x.popOperand('edx').mov(at('eax'),0x4000|vt).mov(at('eax',8),'edx');

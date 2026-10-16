@@ -18,6 +18,9 @@ const groups = {
   VbCompareMethod:/^vb(?:BinaryCompare|TextCompare|UseCompareOption)$/,
   VbDayOfWeek:/^vb(?:UseSystem|Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)$/,
   VbFirstWeekOfYear:/^vb(?:UseSystem|FirstJan1|FirstFourDays|FirstFullWeek)$/,
+  VbTriState:/^vb(?:True|False|UseDefault)$/,
+  VbDateTimeFormat:/^vb(?:GeneralDate|LongDate|ShortDate|LongTime|ShortTime)$/,
+  VbFileAttribute:/^vb(?:Normal|ReadOnly|Hidden|System|Volume|Directory|Archive|Alias)$/,
   VbStrConv:/^vb(?:UpperCase|LowerCase|ProperCase)$/,
   VbCallType:/^vb(?:Method|Get|Let|Set)$/,
   VbScaleMode:/^vb(?:User|Twips|Points|Pixels|Characters|Inches|Millimeters|Centimeters)$/,
@@ -132,7 +135,8 @@ add('Forms',[member('Count','Long'),method('Item','Index As Variant','Form')],{d
 add('Menu',[...props('String','Caption Name'),...props('Boolean','Enabled Visible Checked'),member('Index','Integer')]);
 
 const builtinExtras={Array:'ParamArray ArgList() As Variant',Choose:'Index As Single, ParamArray Choice() As Variant',Switch:'ParamArray VarExpr() As Variant',CallByName:'Object As Object, ProcName As String, CallType As VbCallType, ParamArray Args() As Variant'};
-const argEnums={MsgBox:{buttons:'VbMsgBoxStyle'},StrComp:{compare:'VbCompareMethod'},InStr:{compare:'VbCompareMethod'},InStrRev:{compare:'VbCompareMethod'},Replace:{compare:'VbCompareMethod'},Split:{compare:'VbCompareMethod'},Filter:{compare:'VbCompareMethod'},DateDiff:{firstdayofweek:'VbDayOfWeek',firstweekofyear:'VbFirstWeekOfYear'},DatePart:{firstdayofweek:'VbDayOfWeek',firstweekofyear:'VbFirstWeekOfYear'},Weekday:{firstdayofweek:'VbDayOfWeek'},WeekdayName:{firstdayofweek:'VbDayOfWeek'},StrConv:{conversion:'VbStrConv'}};
+const formatArguments={includeleadingdigit:'VbTriState',useparensfornegativenumbers:'VbTriState',groupdigits:'VbTriState'};
+const argEnums={FormatNumber:formatArguments,FormatCurrency:formatArguments,FormatPercent:formatArguments,FormatDateTime:{namedformat:'VbDateTimeFormat'},Dir:{attributes:'VbFileAttribute'},SetAttr:{attributes:'VbFileAttribute'},MsgBox:{buttons:'VbMsgBoxStyle'},StrComp:{compare:'VbCompareMethod'},InStr:{compare:'VbCompareMethod'},InStrRev:{compare:'VbCompareMethod'},Replace:{compare:'VbCompareMethod'},Split:{compare:'VbCompareMethod'},Filter:{compare:'VbCompareMethod'},DateDiff:{firstdayofweek:'VbDayOfWeek',firstweekofyear:'VbFirstWeekOfYear'},DatePart:{firstdayofweek:'VbDayOfWeek',firstweekofyear:'VbFirstWeekOfYear'},Weekday:{firstdayofweek:'VbDayOfWeek'},WeekdayName:{firstdayofweek:'VbDayOfWeek'},StrConv:{conversion:'VbStrConv'}};
 const returnTypes={CBool:'Boolean',CByte:'Byte',CInt:'Integer',CLng:'Long',CSng:'Single',CDbl:'Double',CCur:'Currency',CDate:'Date',CStr:'String',CDec:'Variant',MsgBox:'VbMsgBoxResult',InputBox:'String',Now:'Date',Date:'Date',Time:'Date',DateSerial:'Date',TimeSerial:'Date',DateValue:'Date',TimeValue:'Date',DateAdd:'Date',DateDiff:'Long',DatePart:'Integer',Timer:'Single',RGB:'ColorConstants',QBColor:'ColorConstants',LBound:'Long',UBound:'Long',Len:'Long',LenB:'Long',Asc:'Integer',AscW:'Integer',InStr:'Long',InStrRev:'Long',StrComp:'Integer',TypeName:'String',VarType:'Integer',CreateObject:'Object',LoadResString:'String',LoadResData:'Byte',LoadResPicture:'Object'};
 export const BUILTIN_SYMBOLS = Object.entries({...BUILTIN_SIGNATURES,...builtinExtras}).map(([name,args])=>{
   const params=splitArguments(args).map(p=>{
@@ -156,14 +160,26 @@ export function builtinType(name) {
 // VirtualFileSystem; native filesystem access is never implied by this list.
 add('Scripting.FileSystemObject',[
   method('FileExists','FileSpec As String','Boolean'),method('FolderExists','FolderSpec As String','Boolean'),
-  method('CreateTextFile','FileName As String, Optional Overwrite As Boolean = True','Scripting.TextStream'),
-  method('OpenTextFile','FileName As String, Optional IOMode As Long = 1, Optional Create As Boolean = False','Scripting.TextStream'),
-  method('DeleteFile','FileSpec As String'),method('CopyFile','Source As String, Destination As String'),method('GetFile','FileSpec As String','Scripting.File'),
-  ...['GetAbsolutePathName','GetFileName','GetBaseName'].map(name=>method(name,'Path As String','String')),
-  method('BuildPath','Path As String, Name As String','String'),method('CreateFolder','Path As String'),
+  method('CreateTextFile','FileName As String, Optional Overwrite As Boolean = True, Optional Unicode As Boolean = False','Scripting.TextStream'),
+  method('OpenTextFile','FileName As String, Optional IOMode As Long = 1, Optional Create As Boolean = False, Optional Format As Long = 0','Scripting.TextStream'),
+  method('DeleteFile','FileSpec As String, Optional Force As Boolean = False'),method('CopyFile','Source As String, Destination As String, Optional Overwrite As Boolean = True'),method('MoveFile','Source As String, Destination As String'),method('GetFile','FileSpec As String','Scripting.File'),method('GetFolder','FolderSpec As String','Scripting.Folder'),
+  ...['GetAbsolutePathName','GetFileName','GetBaseName','GetExtensionName','GetParentFolderName'].map(name=>method(name,'Path As String','String')),
+  method('BuildPath','Path As String, Name As String','String'),method('CreateFolder','FolderName As String','Scripting.Folder'),
 ]);
-add('Scripting.TextStream',[member('AtEndOfStream','Boolean'),method('ReadLine','','String'),method('Read','Characters As Long','String'),method('ReadAll','','String'),method('Write','Text As String'),method('WriteLine','Text As String'),method('Close')]);
-add('Scripting.File',[member('Name','String'),member('Path','String'),member('Size','Long')]);
+add('Scripting.TextStream',[
+  ...props('Boolean','AtEndOfStream AtEndOfLine'),...props('Long','Line Column'),
+  method('ReadLine','','String'),method('Read','Characters As Long','String'),method('ReadAll','','String'),method('Skip','Characters As Long'),method('SkipLine'),
+  method('Write','Text As String'),method('WriteLine','Optional Text As String = ""'),method('WriteBlankLines','Lines As Long'),method('Close'),
+]);
+add('Scripting.File',[
+  ...props('String','Name Path'),member('Size','Long'),member('Attributes','VbFileAttribute'),member('DateLastModified','Date'),
+  method('Delete','Optional Force As Boolean = False'),method('Copy','Destination As String, Optional Overwrite As Boolean = True'),method('Move','Destination As String'),
+  method('OpenAsTextStream','Optional IOMode As Long = 1, Optional Format As Long = 0','Scripting.TextStream'),
+]);
+add('Scripting.Folder',[
+  ...props('String','Name Path'),member('IsRootFolder','Boolean'),member('Attributes','VbFileAttribute'),member('ParentFolder','Scripting.Folder'),member('Files','Scripting.Files'),member('SubFolders','Scripting.Folders'),
+]);
+for(const [name,type] of [['Scripting.Files','Scripting.File'],['Scripting.Folders','Scripting.Folder']])add(name,[member('Count','Long'),method('Item','Key As Variant',type)],{defaultMember:'Item'});
 add('DataEnvironment',[
   member('Connections','DataEnvironment.Connections'),member('Commands','DataEnvironment.Commands'),
   method('SetCredential','Name As String, Value As String'),method('ClearCredentials'),
@@ -211,8 +227,8 @@ export function builtinGroup(name){
   if(/^(Is|VarType|TypeName|LBound|UBound|Error|Erl)/i.test(n))return 'Information';
   return 'Interaction';
 }
-const typedReturns={Atn:'Double',Cos:'Double',Exp:'Double',Log:'Double',Sin:'Double',Sqr:'Double',Tan:'Double',Sgn:'Integer',Rnd:'Single',Val:'Double',Year:'Integer',Month:'Integer',Day:'Integer',Hour:'Integer',Minute:'Integer',Second:'Integer',Weekday:'VbDayOfWeek',MonthName:'String',WeekdayName:'String',StrReverse:'String',Join:'String',Replace:'String',Split:'String',Filter:'String',FormatNumber:'String',FormatCurrency:'String',FormatPercent:'String',FormatDateTime:'String',EOF:'Boolean',LOF:'Long',Loc:'Long',Seek:'Long',FileLen:'Long',FreeFile:'Integer',CurDir:'String',Dir:'String',Environ:'String',Command:'String',GetSetting:'String',DoEvents:'Integer',Erl:'Long',DDB:'Double',FV:'Double',IPmt:'Double',IRR:'Double',MIRR:'Double',NPer:'Double',NPV:'Double',Pmt:'Double',PPmt:'Double',PV:'Double',Rate:'Double',SLN:'Double',SYD:'Double'};
-const voidFunctions=new Set('Randomize Beep Kill Reset ChDir MkDir RmDir SaveSetting DeleteSetting'.split(' '));
+const typedReturns={Atn:'Double',Cos:'Double',Exp:'Double',Log:'Double',Sin:'Double',Sqr:'Double',Tan:'Double',Sgn:'Integer',Rnd:'Single',Val:'Double',Year:'Integer',Month:'Integer',Day:'Integer',Hour:'Integer',Minute:'Integer',Second:'Integer',Weekday:'VbDayOfWeek',MonthName:'String',WeekdayName:'String',StrReverse:'String',Join:'String',Replace:'String',Split:'String',Filter:'String',FormatNumber:'String',FormatCurrency:'String',FormatPercent:'String',FormatDateTime:'String',EOF:'Boolean',LOF:'Long',Loc:'Long',Seek:'Long',FileLen:'Long',FileDateTime:'Date',FileAttr:'Long',GetAttr:'Integer',FreeFile:'Integer',CurDir:'String',Dir:'String',Environ:'String',Command:'String',GetSetting:'String',DoEvents:'Integer',Erl:'Long',DDB:'Double',FV:'Double',IPmt:'Double',IRR:'Double',MIRR:'Double',NPer:'Double',NPV:'Double',Pmt:'Double',PPmt:'Double',PV:'Double',Rate:'Double',SLN:'Double',SYD:'Double'};
+const voidFunctions=new Set('Randomize Beep Kill Reset ChDir MkDir RmDir SetAttr FileCopy SaveSetting DeleteSetting'.split(' '));
 for(const intrinsic of BUILTIN_SYMBOLS){
   const type=voidFunctions.has(intrinsic.name)?'Void':Object.entries(typedReturns).find(([name])=>symbolKey(name)===symbolKey(intrinsic.name))?.[1];
   intrinsic.libraryNamespace='VBA.'+builtinGroup(intrinsic.name);

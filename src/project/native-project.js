@@ -1,3 +1,5 @@
+import {assertFileTree} from './file-tree.js';
+import {editedWorkspaceManifest} from './workspace-manifest.js';
 import {attachNativeWindowState} from './native-window-state.js';
 import {layoutSidecarPath,applyLayoutSidecar} from '../layout/project-sidecar.js';
 import {dataSidecarPath,decodeDataSidecar} from '../data/project-sidecar.js';
@@ -35,7 +37,7 @@ export function parseVBG(text){const records=mainRecords(text),projects=[],start
 export function normalizedEntries(entries){
   const result=new Map(),seen=new Set();let total=0;
   for(const [name,value]of entries){const path=cleanProjectPath(name),key=path.toLowerCase();if(seen.has(key))fail('Duplicate case-insensitive project path: '+name);seen.add(key);const size=bytesOf(value).length;total+=size;if(size>20*1024*1024||total>MAX_NATIVE_BYTES||seen.size>MAX_NATIVE_FILES)fail('Import exceeds 20 MiB/file, 50 MiB total, or 2,000 files');result.set(path,value);}
-  return result;
+  assertFileTree(result.keys());return result;
 }
 export function listProjectEntries(entries){return [...entries].map(([path,data])=>{
   let format=/\.(vb6web|vb6proj)$/i.test(path)?'web':/\.vbg$/i.test(path)?'group':/\.vbp$/i.test(path)?'native':null;
@@ -126,16 +128,29 @@ export async function importNativeFiles(input,options,api){
     if(!projects.length)fail('No referenced projects were supplied for '+selected);
     const startupPath=resolve(entries,selected,group.startup,[],{fallback:options.basenameFallback!==false})||paths[0],index=Math.max(0,paths.indexOf(startupPath)),project=projects[index];
     const files=Object.create(null);for(const [path,value]of entries)files[path]=asset(value);
-    project.nativeWorkspace={version:1,path:selected,originalPath:selected,document,references:group.records.filter(r=>['project','startupproject'].includes(r.key.toLowerCase())).map(r=>({...r,resolved:resolvedRefs.get(unquote(r.value))||null,relocated:resolvedRefs.has(unquote(r.value))&&exactPath(entries,selected,unquote(r.value))!==resolvedRefs.get(unquote(r.value))})),order:paths,startupPath,originalStartupPath:startupPath,peers:projects.filter((_,i)=>i!==index),files};
+    project.nativeWorkspace={version:1,path:selected,originalPath:selected,document,references:group.records.filter(r=>['project','startupproject'].includes(r.key.toLowerCase())).map(r=>({...r,resolved:resolvedRefs.get(unquote(r.value))||null,relocated:resolvedRefs.has(unquote(r.value))&&exactPath(entries,selected,unquote(r.value))!==resolvedRefs.get(unquote(r.value))})),order:paths,originalOrder:[...paths],startupPath,originalStartupPath:startupPath,peers:projects.filter((_,i)=>i!==index),files};
     return {project,diagnostics,format:'native',entryPath:selected};
   }
   const project=singleProject(entries,selected&&/\.vbp$/i.test(selected)?selected:null,options,api,diagnostics);
   return {project,diagnostics,format:'native',entryPath:selected||null};
 }
 
+/** Reject authored metadata that could inject records into a generated VBP. */
+export function validateNativeMetadata(project){
+  const scalar=value=>typeof value==='string'&&!/[\r\n\0]/.test(value);
+  if(!scalar(project.name)||!scalar(project.startup)||project.description!==undefined&&!scalar(project.description))fail('Invalid native project name, description or startup value');
+  if(!Array.isArray(project.references||[])||(project.references||[]).length>10000)fail('Invalid native references');
+  for(const r of project.references||[])if(!r||!['Reference','Object'].includes(r.kind)||!scalar(r.value))fail('Invalid native reference');
+  const native=project.nativeProject||{};
+  if(!Array.isArray(native.entries||[])||(native.entries||[]).length>10000)fail('Invalid project settings');
+  for(const r of native.entries||[])if(!r||!scalar(r.key)||!scalar(r.value)||!r.key||r.key!==r.key.trim()||/^[\[;']/.test(r.key)||/=/.test(r.key)||Object.hasOwn(memberKinds,r.key.toLowerCase())||['name','startup','reference','object'].includes(r.key.toLowerCase()))fail('Invalid project setting');
+  if(!Array.isArray(native.relatedDocuments||[])||(native.relatedDocuments||[]).length>MAX_NATIVE_FILES)fail('Invalid related documents');
+  for(const path of native.relatedDocuments||[])cleanProjectPath(path);
+  for(const m of project.modules)if(m.nativeKind!==undefined&&!['Form','Module','Class','UserControl','PropertyPage','UserDocument','Designer'].includes(m.nativeKind))fail('Invalid native module kind');
+}
 /** Update only tracked values and memberships; unknown sections and records survive. */
 export function patchNativeProject(project,generated){
-  const native=project.nativeProject;if(!native?.document)return generated;if(/[\r\n\0]/.test(project.name)||/[\r\n\0]/.test(project.startup))fail('Invalid native project name or startup value');
+  validateNativeMetadata(project);const native=project.nativeProject;if(!native?.document)return generated;if(/[\r\n\0]/.test(project.name)||/[\r\n\0]/.test(project.startup))fail('Invalid native project name or startup value');
   const lines=linesOf(native.document.text),baseline=native.baseline||{},records=mainRecords(native.document.text),edits=new Map(),add=[],seenModules=new Set();
   const set=(key,value)=>{const items=records.filter(r=>r.key.toLowerCase()===key.toLowerCase());if(items.length)for(const r of items)edits.set(r.index,value);else if(value!==null)add.push(key+'='+value);};
   if(project.name!==baseline.name)set('Name',quote(project.name));if(project.description!==(baseline.description||'')&&project.description!==undefined)set('Description',quote(project.description));if(project.startup!==baseline.startup)set('Startup',quote(project.startup));
@@ -147,6 +162,7 @@ export function patchNativeProject(project,generated){
     if(moved||renamed||!originallyResolved){const ref=nativePathValue(relativeProjectPath(native.path,path)),value=['Module','Class'].includes(m.nativeKind||file.nativeKind)?m.name+'; '+ref:ref;edits.set(file.index,value);}
   }
   for(const m of project.modules)if(!seenModules.has(m.id)){const kind=m.nativeKind||(m.kind==='form'?'Form':m.kind==='class'?'Class':'Module'),ref=nativePathValue(relativeProjectPath(native.path,modulePath(m)));add.push(kind+'='+(['Module','Class'].includes(kind)?m.name+'; ':'')+ref);}
+  for(const path of native.relatedDocuments||[])if(!(native.files||[]).some(f=>f.kind==='related'&&f.resolved?.toLowerCase()===path.toLowerCase()))add.push('RelatedDoc='+nativePathValue(relativeProjectPath(native.path,path)));
   if(!same(project.references||[],baseline.references||[])){for(const r of records)if(['reference','object'].includes(r.key.toLowerCase()))edits.set(r.index,null);for(const r of project.references||[]){if(!['Reference','Object'].includes(r.kind)||/[\r\n\0]/.test(r.value))fail('Invalid native reference');add.push(r.kind+'='+r.value);}}
   if(!same(native.entries||[],baseline.entries||[])){
     for(const r of native.entries||[])if(typeof r.key!=='string'||typeof r.value!=='string'||!r.key||/^[\[;']/.test(r.key)||/[\r\n\0=]/.test(r.key)||/[\r\n\0]/.test(r.value)||Object.hasOwn(memberKinds,r.key.toLowerCase())||['name','startup','reference','object'].includes(r.key.toLowerCase()))fail('Invalid project setting');
@@ -165,7 +181,7 @@ export function patchNativeProject(project,generated){
 }
 function applyLineEdits(lines,edits,add){const eol=preferredEOL(lines.join(''));let output='',inserted=false;for(let i=0;i<lines.length;i++){if(!inserted&&/^\s*\[/.test(lines[i])){if(output&&!/[\r\n]$/.test(output))output+=eol;output+=add.map(x=>x+eol).join('');inserted=true;}if(!edits.has(i))output+=lines[i];else if(edits.get(i)!==null)output+=replaceLineValue(lines[i],edits.get(i),true);}if(!inserted&&add.length){if(output&&!/[\r\n]$/.test(output))output+=eol;output+=add.map(x=>x+eol).join('');}return output;}
 export function workspaceProjects(project){const workspace=project.nativeWorkspace;if(!workspace)return [project];const current={...project};delete current.nativeWorkspace;const projects=[current,...workspace.peers];return workspace.order.map(path=>projects.find(p=>p.nativeProject?.path.toLowerCase()===path.toLowerCase())).filter(Boolean);}
-export function validateWorkspace(project){const w=project.nativeWorkspace;if(!w)return;if(w.version!==1||!Array.isArray(w.peers)||w.peers.length>=MAX_NATIVE_PROJECTS||!Array.isArray(w.order)||!w.files)fail('Invalid native project group snapshot');cleanProjectPath(w.path);const seen=new Set();for(const p of [project,...w.peers]){if(p!==project&&p.nativeWorkspace)fail('Nested project groups are not supported');const path=cleanProjectPath(p.nativeProject?.path||'');if(seen.has(path.toLowerCase()))fail('Duplicate project in group');seen.add(path.toLowerCase());if(p!==project)normalizeProject(p);}if(!seen.has(String(w.startupPath).toLowerCase()))fail('Startup project is not an open member of the group');if(w.order.length!==seen.size||new Set(w.order.map(p=>p.toLowerCase())).size!==seen.size||w.order.some(p=>!seen.has(p.toLowerCase())))fail('Invalid project group ordering');normalizedEntries(Object.entries(w.files).map(([p,a])=>[p,fromBase64(a.data)]));}
+export function validateWorkspace(project){const w=project.nativeWorkspace;if(!w)return;if(w.version!==1||!Array.isArray(w.peers)||w.peers.length>=MAX_NATIVE_PROJECTS||!Array.isArray(w.order)||!w.files)fail('Invalid native project group snapshot');cleanProjectPath(w.path);const seen=new Set(),ids=new Set();for(const p of [project,...w.peers]){if(typeof p?.id!=='string'||!p.id||p.id.length>256||/[\r\n\0]/.test(p.id)||ids.has(p.id))fail('Invalid or duplicate project identity in group');ids.add(p.id);if(p!==project&&p.nativeWorkspace)fail('Nested project groups are not supported');const path=cleanProjectPath(p.nativeProject?.path||'');if(seen.has(path.toLowerCase()))fail('Duplicate project in group');seen.add(path.toLowerCase());if(p!==project)normalizeProject(p);}if(!seen.has(String(w.startupPath).toLowerCase()))fail('Startup project is not an open member of the group');if(w.order.length!==seen.size||new Set(w.order.map(p=>p.toLowerCase())).size!==seen.size||w.order.some(p=>!seen.has(p.toLowerCase())))fail('Invalid project group ordering');if(w.membershipEdited!==undefined&&typeof w.membershipEdited!=='boolean')fail('Invalid group membership edit state');if(!w.document||typeof w.document.text!=='string'||w.document.text.length>2000000||!Array.isArray(w.references||[]))fail('Invalid group manifest metadata');normalizedEntries(Object.entries(w.files).map(([p,a])=>{if(!a||a.encoding!=='base64')fail('Invalid group companion');return [p,fromBase64(a.data)];}));}
 export function selectWorkspaceProject(project,path){validateWorkspace(project);const projects=workspaceProjects(project),selected=projects.find(p=>p.nativeProject?.path.toLowerCase()===path.toLowerCase());if(!selected)fail('Unknown project in group: '+path);const result=normalizeProject(selected);result.nativeWorkspace={...structuredClone(project.nativeWorkspace),peers:projects.filter(p=>p!==selected).map(p=>structuredClone(p))};result.storageFormat=project.storageFormat;return result;}
 export function workspaceFiles(project,options,exportSingle){
   validateWorkspace(project);const w=project.nativeWorkspace,files=Object.create(null),baseline=new Map(),written=new Map();
@@ -175,10 +191,11 @@ export function workspaceFiles(project,options,exportSingle){
     if(previous&&changed&&previous.changed&&!equalBytes(previous.value,value))fail('Conflicting edits to shared file '+path+' in '+previous.project+' and '+p.name+'; save is cancelled');
     if(!previous||changed&&!previous.changed){if(original&&original.path!==path)delete files[original.path];files[path]=value;written.set(key,{value,changed,project:p.name});}
   }
+  for(const p of workspaceProjects(project)){const native=p.nativeProject;if(native.originalPath&&native.path!==native.originalPath&&!written.has(native.originalPath.toLowerCase()))delete files[native.originalPath];}
   const edits=new Map(),records=mainRecords(w.document.text),moved=w.path!==w.originalPath;
   for(const r of records){const key=r.key.toLowerCase(),reference=w.references?.find(ref=>ref.index===r.index);if(key==='startupproject'&&(moved||reference?.relocated||w.startupPath!==w.originalStartupPath))edits.set(r.index,nativePathValue(relativeProjectPath(w.path,w.startupPath)));else if(key==='project'&&(moved||reference?.relocated)){const found=reference?.resolved||exactPath(new Map(Object.entries(w.files)),w.originalPath,unquote(r.value));if(found)edits.set(r.index,nativePathValue(relativeProjectPath(w.path,found)));}}
   const additions=!records.some(r=>r.key.toLowerCase()==='startupproject')&&w.startupPath!==w.originalStartupPath?['StartupProject='+nativePathValue(relativeProjectPath(w.path,w.startupPath))]:[];
   if(w.startupPath!==w.originalStartupPath&&!records.some(r=>r.key.toLowerCase()==='project'&&(w.references?.find(ref=>ref.index===r.index)?.resolved||exactPath(new Map(Object.entries(w.files)),w.originalPath,unquote(r.value)))===w.originalStartupPath))additions.push('Project='+nativePathValue(relativeProjectPath(w.path,w.originalStartupPath)));
-  if(written.has(cleanProjectPath(w.path).toLowerCase()))fail('Project group output path collides with a project file');if(moved)delete files[w.originalPath];files[cleanProjectPath(w.path)]=encodeNativeText(applyLineEdits(linesOf(w.document.text),edits,additions),w.document,options.encoding);
+  if(written.has(cleanProjectPath(w.path).toLowerCase()))fail('Project group output path collides with a project file');if(moved)delete files[w.originalPath];files[cleanProjectPath(w.path)]=encodeNativeText(editedWorkspaceManifest(w)??applyLineEdits(linesOf(w.document.text),edits,additions),w.document,options.encoding);
   normalizedEntries(Object.entries(files));return files;
 }

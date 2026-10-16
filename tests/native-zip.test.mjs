@@ -140,3 +140,8 @@ test('ZIP writer rejects name-length overflow and malformed Unicode', () => {
   assert.throws(() => writeZip({['a'.repeat(65536)]: ''}), /limits/);
   assert.throws(() => writeZip({'bad\ud800.bas': ''}), /Unicode/);
 });
+
+for(const names of [['a','a/b'],['a/b','A'],['a','a/b/'],['a','a/b/c/']])test('ZIP read preflights file/directory collision '+names.join(', '),async()=>{
+  const original=globalThis.DecompressionStream;let inflations=0;globalThis.DecompressionStream=class {constructor(){inflations++;throw new Error('must not inflate');}};
+  try{await assert.rejects(()=>readZip(fixture(names.map(name=>({name,data:name.endsWith('/')?'':'source',method:8})))),/File\/directory/);assert.equal(inflations,0);}finally{globalThis.DecompressionStream=original;}
+});

@@ -13,7 +13,7 @@ function json(res, status, value) { if (res.writableEnded || res.destroyed) retu
 function stream(res) { if (res.headersSent) return; res.writeHead(200, {'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no'}); res.write(': connected\n\n'); }
 function event(res, value) { if (res.destroyed || res.writableEnded) return; const data = JSON.stringify(value); if (utf8Length(data) > MCP_LIMIT || res.writableLength > MCP_LIMIT) { res.destroy(); return; } stream(res); res.write('event: message\ndata: ' + data + '\n\n'); }
 async function body(req) {
-  if (!req.headers['content-type']?.toLowerCase().startsWith('application/json')) throw Object.assign(new Error('Use application/json.'), {status: 415});
+  if ((req.headers['content-type']||'').split(';',1)[0].trim().toLowerCase()!=='application/json') throw Object.assign(new Error('Use application/json.'), {status: 415});
   const chunks = []; let size = 0;
   for await (const chunk of req) { size += chunk.length; if (size > MCP_LIMIT) throw Object.assign(new Error('Request is too large.'), {status: 413}); chunks.push(chunk); }
   try { return JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(Buffer.concat(chunks))); } catch { throw new McpError(-32700, 'Invalid JSON.'); }
@@ -30,7 +30,7 @@ export async function createBridge({port = 8766, origins = [], allowFile = false
   const requests = new Map(), sessions = new Map(); let owner = null, actualPort;
   function enqueue(value) {
     if (!owner) throw Object.assign(new Error('No browser is attached. Enable sharing and connect in Tools → MCP Agent Access.'), {status: 503});
-    const size = JSON.stringify(value).length;
+    const size = utf8Length(JSON.stringify(value));
     if (owner.queue.length >= 128 || owner.bytes + size > MCP_LIMIT * 4) throw Object.assign(new Error('Browser queue is full.'), {status: 503});
     owner.queue.push(value); owner.bytes += size;
     if (owner.poll) { const res = owner.poll; owner.poll = null; clearTimeout(owner.pollTimer); const events = owner.queue.splice(0); owner.bytes = 0; json(res, 200, {events}); }

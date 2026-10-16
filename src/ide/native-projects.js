@@ -1,3 +1,4 @@
+import {installProjectGroups} from './project-group.js';
 import {installNativeWorkspace} from './native-workspace.js';
 import {writeRecoverableNativeDirectory} from '../project/native-save-recovery.js';
 import {mergedProject} from '../project/import-merge.js';
@@ -38,8 +39,8 @@ async function importOptions(entries,provided={}){
   return {...provided,entryPath:pick.value||undefined,encoding:encoding.value};
 }
 export function installNativeProjects(ide){
-  const menu=ide.menu.bind(ide),command=ide.command.bind(ide),renderTree=ide.renderProjectTree.bind(ide),loadProject=ide.loadProject.bind(ide);
-  let importing=false,saving=false,groupSwitch=false,importGeneration=0;const sessions=new Map();
+  const menu=ide.menu.bind(ide),command=ide.command.bind(ide),renderTree=ide.renderProjectTree.bind(ide);
+  let importing=false,saving=false,importGeneration=0;
   ide.fileInput.removeAttribute('accept'); // The complete selected workspace can contain arbitrary companion files.
   ide.nativeGroupSelect=el('select',{'aria-label':'Active project in group',title:'Active project in group',class:'toolbar-select',style:{maxWidth:'160px'},hidden:true});
   ide.nativeGroupSelect.addEventListener('change',()=>ide.switchNativeProject(ide.nativeGroupSelect.value));ide.projectToolbar.append(ide.nativeGroupSelect);
@@ -52,45 +53,24 @@ export function installNativeProjects(ide){
     for(const row of ide.projectTree.querySelectorAll('[data-module]')){const m=ide.project.modules.find(m=>m.name===row.dataset.module);if(m)row.querySelector('.tree-label').textContent=m.name+' ('+fileName(m)+')';}
   };
   ide.inspectNativeFile=async file=>{const path=file.resolved||file.path,asset=ide.project.assets?.[path]||ide.project.nativeWorkspace?.files?.[path];if(!asset){await alertDialog('This referenced file was not supplied: '+file.path,'Native File');return;}const bytes=fromBase64(asset.data);let text;try{text=decodeNativeText(bytes.subarray(0,262144),{encoding:ide.project.nativeProject?.document?.encoding||'auto'}).text;}catch{text=[...bytes.subarray(0,4096)].map(b=>b.toString(16).padStart(2,'0')).join(' ');}await modal('Native File — '+path,{width:720,content:el('div',{},el('p',{},file.opaqueReason||'Preserved companion file. This viewer does not execute or change the file.'),el('textarea',{'aria-label':'Read-only native file',readonly:true,value:'',style:{width:'100%',height:'300px'}},text),el('p',{},bytes.length+' original bytes; preview is bounded.')),buttons:[{label:'Download Original',value:'download',action:()=>download(path.split('/').at(-1),bytes)},{label:'Close',value:false}]});};
-  ide.loadProject=(project,...args)=>{if(!groupSwitch){sessions.clear();importGeneration++;}return loadProject(project,...args);};
-  ide.switchNativeProject=(path,{interactive=true}={})=>{
-    try{
-      if(ide.runState!=='design')throw new Error('Stop execution before switching projects.');
-      if(path.toLowerCase()===projectFile(ide.project).toLowerCase())return;
-      const old=ide.project,dirty=ide.dirty,next=selectWorkspaceProject(old,path);let saved=ide.savedJSON;try{saved=JSON.stringify(selectWorkspaceProject(JSON.parse(saved),path));}catch{}
-      sessions.set(projectFile(old),{undo:ide.history.undoStack.slice(),redo:ide.history.redoStack.slice(),breakpoints:clone(ide.breakpoints),watches:clone(ide.watches),docs:clone(ide.docs),active:ide.activeDoc?.key});
-      groupSwitch=true;try{ide.loadProject(next);}finally{groupSwitch=false;}
-      const state=sessions.get(projectFile(next));if(state){ide.history.undoStack=state.undo;ide.history.redoStack=state.redo;ide.breakpoints=state.breakpoints;ide.watches=state.watches;for(const doc of state.docs)ide.openDocument(doc.id,doc.view);const active=state.docs.find(d=>d.key===state.active);if(active)ide.openDocument(active.id,active.view);}
-      // Old whole-project undo snapshots cannot replace freshly edited peers.
-      ide.savedJSON=saved;ide.dirty=dirty||JSON.stringify(ide.project)!==saved;ide.updateTitle();ide.persist();ide.status('Active project: '+next.name+'; all projects remain in the workspace.');
-    }catch(error){if(!interactive)throw error;ide.nativeGroupSelect.value=projectFile(ide.project);alertDialog(error.message,'Project Group');}
-  };
-  // Preserve the current workspace peers when applying a cached project's undo snapshot.
-  for(const method of ['undo','redo']){const original=ide.history[method].bind(ide.history);ide.history[method]=(...args)=>{const current=ide.project.nativeWorkspace,result=original(...args);if(current&&result?.nativeWorkspace)result.nativeWorkspace.peers=clone(current.peers);return result;};}
-  ide.openNativeGroupDialog=async()=>{
-    if(!ide.project.nativeWorkspace)return false;
-    const projects=workspaceProjects(ide.project),active=el('select',{'aria-label':'Active project',class:'dialog-input'},...projects.map(p=>option(projectFile(p),p.name+' — '+projectFile(p)))),startup=el('select',{'aria-label':'Startup project',class:'dialog-input'},...projects.map(p=>option(projectFile(p),p.name)));
-    active.value=projectFile(ide.project);startup.value=ide.project.nativeWorkspace.startupPath;
-    if(!await modal('Project Group',{content:el('div',{},el('label',{},'Active project:',active),el('label',{},'Startup project:',startup),el('p',{},'Save Project writes every project in this group. The browser runs one active project at a time.'))}))return false;
-    if(startup.value!==ide.project.nativeWorkspace.startupPath){const before=clone(ide.project);ide.project.nativeWorkspace.startupPath=startup.value;ide.record(before,'Change startup project');}
-    if(active.value!==projectFile(ide.project))ide.switchNativeProject(active.value);return true;
-  };
   ide.importProjectEntries=async(entries,options={})=>{
     if(options.expectedProject!==undefined&&JSON.stringify(ide.project)!==options.expectedProject){await alertDialog('The project changed while files were being read. Open again to avoid losing edits.','Open Project');return false;}
     if(importing||saving)return false;importing=true;
     try{
       if(ide.runState!=='design')throw new Error('Stop execution before opening source files.');
-      if(!options.add&&ide.dirty&&!await ide.confirmDiscard())return false;
+      if(options.add&&options.addProject)throw new Error('Choose either source files or a project group member.');
+      if(!options.add&&!options.addProject&&ide.dirty&&!await ide.confirmDiscard())return false;
       const token=JSON.stringify(ide.project),selected=await importOptions(entries,options);if(selected===null)return false;
       const result=await importFiles(entries,selected);
       if(JSON.stringify(ide.project)!==token)throw new Error('The current project changed during import. Open again to avoid losing edits.');
-      if(options.add){const before=clone(ide.project);ide.project=mergedProject(ide.project,result.project);ide.record(before,'Add existing native source files');}
+      if(options.add){const before=clone(ide.project),next=mergedProject(ide.project,result.project);sourceFiles(next);ide.project=next;ide.record(before,'Add existing native source files');}
+      else if(options.addProject)ide.addNativeProject(result.project,{activate:options.activate===true,expectedProject:token});
       else ide.loadProject(result.project);
       ide.diagnostics=result.diagnostics;ide.editor.setDiagnostics(ide.diagnostics);if(ide.diagnostics.length)ide.showDebug('Errors');
-      ide.status('Opened '+ide.project.name+(ide.diagnostics.length?' — review import diagnostics.':'.'));return true;
+      ide.status((options.addProject?'Added project to group: ':options.add?'Added source files to ':'Opened ')+ide.project.name+(ide.diagnostics.length?' — review import diagnostics.':'.'));return true;
     }catch(error){await alertDialog(error.message,'Open Project');return false;}finally{importing=false;}
   };
-  ide.importBrowserFiles=async(files,options={})=>{if(!files.length)return false;const generation=++importGeneration,expectedProject=JSON.stringify(ide.project);try{const entries=await browserFileEntries(files,{filenameEncoding:options.filenameEncoding||ide.zipFilenameEncoding});if(generation!==importGeneration)return false;return await ide.importProjectEntries(entries,{...options,expectedProject});}catch(error){await alertDialog(error.message,'Open Project');return false;}};
+  ide.importBrowserFiles=async(files,options={})=>{if(!files.length)return false;const generation=++importGeneration,expectedProject=options.expectedProject??JSON.stringify(ide.project);try{const entries=await browserFileEntries(files,{filenameEncoding:options.filenameEncoding||ide.zipFilenameEncoding});if(generation!==importGeneration)return false;return await ide.importProjectEntries(entries,{...options,expectedProject});}catch(error){await alertDialog(error.message,'Open Project');return false;}};
   ide.openFolder=async()=>{
     const host=ide.root.ownerDocument.defaultView,expectedProject=JSON.stringify(ide.project);
     if(typeof host.showDirectoryPicker==='function')try{const handle=await host.showDirectoryPicker({mode:'read'}),{entries,skipped}=await readNativeDirectory(handle),opened=await ide.importProjectEntries(entries,{expectedProject});if(opened&&skipped.length)ide.status('Opened '+ide.project.name+'; skipped '+skipped.join(', '));return opened;}catch(error){if(error.name!=='AbortError')await alertDialog(error.message,'Open Project Folder');return false;}
@@ -149,14 +129,16 @@ export function installNativeProjects(ide){
     if(Object.keys(companions).length===1)download(path.split('/').at(-1),all[path],'application/octet-stream');else download(module.name+'-native.zip',writeZip(companions),'application/zip');
     ide.status('Exported '+path+' with its available companion resources.');
   };
-  ide.menu=name=>{const items=menu(name);if(name==='File'){const at=items.findIndex(i=>i?.id==='saveAs');items.splice(at+1,0,{id:'zipEncoding',label:'Open ZIP with Filename Encoding…',icon:'open'},{id:'saveNative',label:'Save Native VB6 Project (.zip)…',icon:'save'},{id:'saveNativeFolder',label:'Save Native VB6 Folder…'},{id:'saveWebProject',label:'Save Browser Project (.vb6web)…'});}if(name==='Project')items.unshift({id:'nativeSettings',label:'Native Project Settings…',enabled:!!ide.project.nativeProject&&ide.runState==='design'},{id:'nativeGroup',label:'Project Group…',enabled:!!ide.project.nativeWorkspace&&ide.runState==='design'},null);return items;};
+  ide.menu=name=>{const items=menu(name);if(name==='File'){const at=items.findIndex(i=>i?.id==='saveAs');items.splice(at+1,0,{id:'zipEncoding',label:'Open ZIP with Filename Encoding…',icon:'open'},{id:'saveNative',label:'Save Native VB6 Project (.zip)…',icon:'save'},{id:'saveNativeFolder',label:'Save Native VB6 Folder…'},{id:'saveWebProject',label:'Save Browser Project (.vb6web)…'});}if(name==='Project')items.unshift({id:'nativeSettings',label:'Native Project Settings…',enabled:!!ide.project.nativeProject&&ide.runState==='design'},{id:'nativeGroup',label:ide.project.nativeWorkspace?'Project Group…':'Create Project Group…',enabled:ide.runState==='design'},{id:'nativeAddProject',label:'Add Existing Project to Group…',enabled:ide.runState==='design'},null);return items;};
   ide.command=async(id,...args)=>{
     try{
       if(id==='zipEncoding'){const pick=el('select',{'aria-label':'ZIP filename encoding',class:'dialog-input'},...ZIP_FILENAME_ENCODINGS.map(e=>option(e)));pick.value=ide.zipFilenameEncoding||'cp437';if(!await modal('ZIP Filename Encoding',{content:el('div',{},el('p',{},'For unmarked legacy ZIP filenames only. UTF-8 flags and valid Unicode Path metadata take precedence. This does not change source text encoding. Selection lasts until changed or the IDE reloads.'),el('label',{},'Filename code page:',pick))}))return false;ide.zipFilenameEncoding=zipFilenameEncoding(pick.value);ide.addingFiles=false;ide.fileInput.click();return true;}if(id==='open'){ide.addingFiles=false;ide.fileInput.click();return true;}if(id==='nativeSettings')return await ide.openNativeSettings();
+      if(id==='nativeAddProject')return ide.chooseNativeProject();
       if(id==='saveAs')return ide.saveNativeAs();if(id==='saveNative')return ide.saveProject({format:'native'});if(id==='saveNativeFolder')return ide.saveProject({format:'folder'});if(id==='saveWebProject')return ide.saveProject({format:'web'});if(id==='nativeGroup')return ide.openNativeGroupDialog();if(id==='saveModule')return ide.saveNativeModule();
       if(id==='exportSources'){const files=sourceFiles(ide.project);let path=ide.project.name+'.vb6web';while(Object.keys(files).some(p=>p.toLowerCase()===path.toLowerCase()))path='snapshot-'+path;files[path]=JSON.stringify(ide.project,null,2);if(!Object.keys(files).some(p=>p.toLowerCase()==='vb6-studio-readme.txt'))files['VB6-Studio-README.txt']=readme;download(safeName(ide.project.name)+'-sources.zip',writeZip(files),'application/zip');ide.status('Exported native sources and browser snapshot.');return true;}
       return await command(id,...args);
     }catch(error){await alertDialog(error.message,'Native Project');return false;}
   };
+  installProjectGroups(ide,{onLoad:()=>{importGeneration++;}});
   installNativeWorkspace(ide);
 }

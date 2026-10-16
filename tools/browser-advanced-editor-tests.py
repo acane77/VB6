@@ -204,6 +204,43 @@ class AdvancedEditorAcceptance(unittest.TestCase):
         self.page.wait_for_function('vb6Studio.output.includes("42")')
         self.assertIsNone(self.page.evaluate('()=>r.debugHover.provideHover(s.record.model,{lineNumber:5,column:16})'))
         self.page.evaluate('vb6Studio.stop(false)');self.done()
+    def paused_inline_fixture(self):
+        self.page.evaluate(r"""()=>{const p=VB6StudioAPI.newProject('InlineValues');p.id='inline-values';p.modules=[{id:'form',name:'MainModule',kind:'module',code:'Public Sub Main()\n  Dim value As Long\n  value = 42\n  Stop\n  Debug.Print value\nEnd Sub\n'}];p.startup='Sub Main';vb6Studio.loadProject(p);vb6Studio.openDocument('form','code');}""")
+        self.enable();self.page.evaluate('()=>{void vb6Studio.command("run");}')
+        self.page.wait_for_function('vb6Studio.runState==="paused"&&vb6Studio.debuggerWindows.pauseId>0')
+    def test_inline_values_use_real_paused_storage_and_clear_on_resume_in_both_panes(self):
+        self.paused_inline_fixture();before=self.text()
+        self.page.wait_for_function('s.views[0].inlineValues.last.some(v=>v.text.includes("value = 42"))')
+        self.page.locator('.advanced-inline-debug-value').filter(has_text='value = 42').first.wait_for(state='visible')
+        self.assertEqual(self.text(),before);self.assertEqual(self.page.evaluate('vb6Studio.history.undoStack.length'),0)
+        self.page.evaluate('s.setSplit(true)')
+        self.page.wait_for_function('s.views.length===2&&s.views.every(v=>v.inlineValues.last.some(x=>x.text.includes("value = 42")))')
+        self.assertEqual(self.page.evaluate('r.inlineInspections.maxConcurrent'),2)
+        self.page.evaluate('()=>{void vb6Studio.command("run");}')
+        self.page.wait_for_function('vb6Studio.output.includes("42")&&s.views.every(v=>v.inlineValues.last.length===0)')
+        self.assertEqual(self.page.locator('.advanced-inline-debug-value').count(),0);self.assertEqual(self.text(),before)
+        self.page.evaluate('vb6Studio.stop(false)');self.done()
+    def test_inline_values_option_and_composition_do_not_mutate_the_document(self):
+        self.paused_inline_fixture();before=self.text()
+        self.page.wait_for_function('s.views[0].inlineValues.last.length>0')
+        self.page.evaluate('s.composing=true;s.refreshInlineValues()')
+        self.assertEqual(self.page.evaluate('s.views[0].inlineValues.last.length'),0)
+        self.page.evaluate('s.composing=false;s.refreshInlineValues()')
+        self.page.wait_for_function('s.views[0].inlineValues.last.length>0')
+        self.page.evaluate('()=>vb6Studio.advancedEditor.configure({enabled:true,inlineValues:false})')
+        self.page.evaluate('globalThis.r=vb6Studio.advancedEditor.runtime;globalThis.s=r.surfaces.get(vb6Studio.editor)')
+        self.assertFalse(self.page.evaluate('r.settings.inlineValues'));self.assertEqual(self.page.locator('.advanced-inline-debug-value').count(),0)
+        self.assertEqual(self.text(),before);self.assertEqual(self.page.evaluate('vb6Studio.history.undoStack.length'),0)
+        self.page.evaluate('vb6Studio.stop(false)');self.done()
+    def test_structural_folding_uses_matched_blocks_and_invalidates_on_edit(self):
+        code="Option Explicit\n' #Region Helpers\nPrivate Sub Button1_Click()\n  For i=1 To 3\n    Wend\n  Next\nEnd Sub\n' #End Region\n"
+        self.source_fixture(code);self.enable()
+        folds=self.page.evaluate('()=>s.record.client.request("textDocument/foldingRange",{textDocument:{uri:s.record.uri}})')
+        self.assertEqual([(r['startLine'],r['endLine']) for r in folds],[(1,7),(2,6),(3,5)])
+        self.page.evaluate('s.replace("",s.record.model.getValue().indexOf("  Next"),s.record.model.getValue().indexOf("  Next")+7)')
+        folds=self.page.evaluate('()=>s.record.client.request("textDocument/foldingRange",{textDocument:{uri:s.record.uri}})')
+        self.assertEqual([(r['startLine'],r['endLine']) for r in folds],[(1,6),(2,5)])
+        self.page.evaluate('vb6Studio.command("undo")');self.assertEqual(self.text(),code);self.done()
     def test_confirmation_rejects_edits_after_an_unrelated_document_changes(self):
         self.enable();before=self.text()
         self.page.evaluate(r'''()=>{const c=s.record.client,u=s.record.uri;globalThis.editResult=null;const edit={changes:{[u]:[{range:{start:{line:0,character:0},end:{line:0,character:0}},newText:"'should not apply\n"}]}};r.applyEdit(c,edit,'Test delayed consent',true).then(value=>editResult=value);}''')
@@ -219,6 +256,48 @@ class AdvancedEditorAcceptance(unittest.TestCase):
         self.page.evaluate('s.views[1].view.setPosition({lineNumber:4,column:6});s.views[0].view.focus();s.views[1].view.focus();s.setSplit(false)')
         self.page.evaluate('vb6Studio.advancedEditor.configure({enabled:false})')
         self.page.wait_for_timeout(100);self.done()
+    def source_fixture(self,code):
+        self.page.evaluate('code=>{const p=structuredClone(vb6Studio.project);p.modules[0].code=code;vb6Studio.loadProject(p);vb6Studio.openDocument("form","code");}',code)
+    def test_classic_selection_find_is_global_undoable_and_preserves_scope(self):
+        code='Option Explicit\nPrivate Sub Button1_Click()\n  Debug.Print "outside café"\nEnd Sub\nPrivate Sub Second()\n  Debug.Print "café", "café"\nEnd Sub\n'
+        self.source_fixture(code)
+        scope=self.page.evaluate(r'''()=>{const e=vb6Studio.editor,start=e.text.indexOf('  Debug.Print',e.text.indexOf('Sub Second'));e.selectGlobal(start,e.text.indexOf('\nEnd Sub',start));e.setViewMode('procedure');e.selectGlobal(start,e.text.indexOf('\nEnd Sub',start));const scope=e.selectionBounds();e.showFind(true);return scope;}''')
+        bar=self.page.locator('.editor-find:visible');bar.get_by_role('textbox',name='Find what').fill('café');bar.get_by_role('checkbox',name='Find in selection').check()
+        self.assertEqual(bar.locator('.find-result').inner_text(),'2 matches')
+        bar.get_by_role('button',name='Find next',exact=True).click()
+        self.page.evaluate('vb6Studio.editor.showFind(true)')
+        self.assertEqual(self.page.evaluate('vb6Studio.editor.findScope'),scope)
+        bar.get_by_role('textbox',name='Replace with').fill('changed$1');bar.get_by_role('button',name='All',exact=True).click()
+        self.assertEqual(self.text(),code[:scope['start']]+code[scope['start']:scope['end']].replace('café','changed$1')+code[scope['end']:])
+        self.assertEqual(self.page.evaluate('vb6Studio.history.undoStack.length'),1)
+        self.assertEqual(self.page.evaluate('vb6Studio.editor.findScope.end'),scope['end']+10)
+        bar.get_by_role('textbox',name='Find what').press('Escape');self.assertEqual(self.page.locator('.editor-find:visible').count(),0)
+        self.page.evaluate('vb6Studio.command("undo")');self.assertEqual(self.text(),code);self.done()
+    def test_classic_source_action_menu_extracts_and_undoes_one_transaction(self):
+        code='Option Explicit\nPrivate Sub Button1_Click()\n    Debug.Print 42\nEnd Sub\n'
+        self.source_fixture(code);self.page.evaluate('()=>{const e=vb6Studio.editor,n=e.text.indexOf("42");e.selectGlobal(n,n+2);e.input.focus();}')
+        self.page.keyboard.press('Control+.');self.page.get_by_text('Extract constant NewConstant',exact=True).click()
+        self.assertIn('    Const NewConstant As Integer = 42\n',self.text());self.assertIn('Debug.Print NewConstant',self.text())
+        self.assertEqual(self.page.evaluate('vb6Studio.history.undoStack.length'),1)
+        self.assertEqual(self.page.evaluate('()=>{const e=vb6Studio.editor,s=e.selectionBounds();return e.text.slice(s.start,s.end);}') ,'NewConstant')
+        self.page.keyboard.press('Control+z');self.assertEqual(self.text(),code);self.done()
+    def test_classic_source_actions_refuse_stale_readonly_composition_and_designer_contexts(self):
+        code='Option Explicit\nPrivate Sub Button1_Click()\n    Debug.Print 42\nEnd Sub\n'
+        self.source_fixture(code)
+        result=self.page.evaluate('''()=>{const i=vb6Studio,e=i.editor,n=e.text.indexOf('42');e.selectGlobal(n,n+2);const a=i.sourceCodeActions().find(a=>a.kind==='refactor.extract.constant'),snap={project:i.project,module:i.activeModule,editor:e};let blocked=0;e.composing=true;const absent=i.sourceCodeActions().length;try{i.applySourceCodeAction(a,snap);}catch{blocked++;}e.composing=false;e.setReadOnly(true);try{i.applySourceCodeAction(a,snap);}catch{blocked++;}e.setReadOnly(false);i.openDocument(i.activeModule.id,'designer');try{i.applySourceCodeAction(a,snap);}catch{blocked++;}i.openDocument(i.activeModule.id,'code');e.replaceGlobal(' ',e.text.length,e.text.length);try{i.applySourceCodeAction(a,snap);}catch{blocked++;}return {absent,blocked};}''')
+        self.assertEqual(result,{'absent':0,'blocked':4});self.assertNotIn('NewConstant',self.text());self.done()
+    def test_built_in_constant_actions_apply_versioned_workspace_edits_in_monaco(self):
+        code='Option Explicit\nPrivate Sub Button1_Click()\n    Debug.Print 42\nEnd Sub\n'
+        self.source_fixture(code);self.enable()
+        result=self.page.evaluate('''async()=>{const c=s.record.client,d=c.documents.get(s.record.uri),n=d.text.indexOf('42'),actions=await c.request('textDocument/codeAction',{textDocument:{uri:d.uri},range:d.range(n,n+2),context:{only:['refactor.extract'],diagnostics:[]}});const a=actions[0];return {kind:a.kind,version:a.edit.documentChanges[0].textDocument.version,applied:await r.applyEdit(c,a.edit,a.title,false)};}''')
+        self.assertEqual(result['kind'],'refactor.extract.constant');self.assertEqual(result['version'],1);self.assertTrue(result['applied']['applied'])
+        self.assertIn('Const NewConstant As Integer = 42',self.text());self.assertEqual(self.page.evaluate('s.record.model.getValue()'),self.text())
+        self.assertEqual(self.page.evaluate('vb6Studio.history.undoStack.length'),1);self.page.evaluate('vb6Studio.command("undo")');self.assertEqual(self.text(),code);self.done()
+    def test_built_in_workspace_diagnostics_have_stable_results_and_current_versions(self):
+        self.enable()
+        result=self.page.evaluate('''async()=>{const c=s.record.client,first=await c.request('workspace/diagnostic',{identifier:'vb6-studio',previousResultIds:[]},{workspace:true});const previousResultIds=first.items.map(i=>({uri:i.uri,value:i.resultId})),second=await c.request('workspace/diagnostic',{identifier:'vb6-studio',previousResultIds},{workspace:true});return {count:first.items.length,full:first.items.every(i=>i.kind==='full'&&Array.isArray(i.items)),unchanged:second.items.every(i=>i.kind==='unchanged'),versions:second.items.every(i=>i.version===c.documents.get(i.uri).version),listeners:c.listeners.get('$/progress')?.size||0};}''')
+        self.assertGreaterEqual(result['count'],2);self.assertTrue(result['full']);self.assertTrue(result['unchanged']);self.assertTrue(result['versions'])
+        self.assertLessEqual(result['listeners'],1);self.done()
     def test_large_document_keeps_dom_and_lexical_scans_bounded(self):
         self.page.evaluate(r'''()=>{const p=VB6StudioAPI.newProject('Large');p.id='large';p.modules[0].code='Option Explicit\nPrivate Sub Main()\nDim value As Long\n'+('    value = 1\n').repeat(99996)+'End Sub\n';vb6Studio.loadProject(p);vb6Studio.openDocument(p.modules[0].id,'code');}''')
         self.enable();metrics=self.page.evaluate('''()=>{const model=s.record.model,doc=s.record.client.documents.get(s.record.uri),before=vb6Studio.editor.metrics.indexedLines,scanned=doc.scannedCharacters,times=[];s.view.setPosition({lineNumber:50000,column:14});

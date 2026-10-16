@@ -1,3 +1,4 @@
+import {InlineInspectionPool} from './debug-inline-values.js';
 import {DebugHoverProvider} from './debug-hover.js';
 import {NavigationTools} from './navigation-tools.js';
 import {LanguageClient} from './client.js';
@@ -54,6 +55,7 @@ export class AdvancedEditorRuntime {
       this.disposables.push({dispose:client.on('closed',()=>{this.diagnosticValues.get(client)?.clear();if(!this.disposed){this.report(new Error('Language server disconnected. Source remains editable; reapply Advanced Editor Options to reconnect.'));for(const language of ['vb6','xaml'])if(this.clients[language]===client)this.providers.get(language)?.dispose();}})});
       this.disposables.push({dispose:client.on('window/logMessage',p=>this.report(p.message))});
     }
+    this.inlineInspections=new InlineInspectionPool();this.disposables.push(this.inlineInspections);
     this.debugHover=new DebugHoverProvider(this);
     this.disposables.push(this.debugHover,this.monaco.languages.registerHoverProvider('vb6',this.debugHover));
     this.navigationTools=new NavigationTools(this);
@@ -61,6 +63,7 @@ export class AdvancedEditorRuntime {
   }
   installHooks() {
     const wrap=(object,name,handler)=>{const original=object[name],wrapped=function(...args){return handler(original.bind(this),...args);};object[name]=wrapped;this.disposables.push({dispose:()=>{if(object[name]===wrapped)object[name]=original;}});};
+    if(this.ide.debuggerWindows)wrap(this.ide.debuggerWindows,'refresh',(original,...args)=>{const result=original(...args);for(const surface of this.surfaces.values())surface.refreshInlineValues();return result;});
     wrap(this.ide.documents,'editor',(original,module)=>{const editor=original(module);if(!this.syncing)this.attachSource(editor,module);return editor;});
     wrap(this.ide.documents,'reset',(original,...args)=>{this.navigationTools.dispose();for(const surface of [...this.surfaces.values()])surface.dispose();for(const record of [...this.records.values()])this.removeRecord(record);this.metadataKey=null;return original(...args);});
     if(this.ide.xaml)wrap(this.ide.xaml,'open',(original,...args)=>{const tool=original(...args);this.sync();if(tool){this.attachXaml(tool);this.surfaces.get(tool.editor)?.focus();}return tool;});

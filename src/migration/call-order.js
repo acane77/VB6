@@ -45,7 +45,7 @@ export function orderedCall(node, procedure, context, emitArgument, emitExpressi
   }
   const types = procedure.params.map(p => parameterType(p, procedure, context));
   const returns = !writing && (procedure.kind === 'function' || procedure.kind === 'property');
-  const returnType = returns ? parameterType({type:procedure.returnType || procedure.type}, procedure, context) : null;
+  const returnType = returns ? parameterType({type:procedure.returnType || procedure.type, bounds:procedure.returnArray?[]:null}, procedure, context) : null;
   const signature = JSON.stringify([target, receiverType, types, supplied.map(item => item.position), procedure.params.map(p => p.byRef), returnType, accessor]);
   let adapter = context.callAdapters.get(signature);
   if (!adapter) {

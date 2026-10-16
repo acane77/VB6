@@ -135,7 +135,7 @@ class ProcedureCompiler {
       const tokens=tokenize(text);let level=0,equal;for(const t of tokens){if(t.value==='(')level++;else if(t.value===')')level--;else if(t.value==='='&&level===0){equal=t;break;}}
       if(equal){const call=E(text.slice(0,equal.start));if(call.kind!=='call'||call.args.length<2||call.args.length>3||!['id','member','call'].includes(call.args[0].kind)||call.args.some(a=>['missing','named'].includes(a.kind)))throw new VBError('Invalid Mid assignment',1002);this.emit('stringMid',{target:call.args[0],start:call.args[1],length:call.args[2],expr:E(text.slice(equal.end))},line);return;}
     }
-    if(/^(Declare|Implements|Get\s+#|Put\s+#|SetAttr|FileCopy|#If|#Else|#End)/i.test(text))throw new VBError(`Unsupported statement: ${text.split(/\s/)[0]}`,445);
+    if(/^(Declare|Implements|Get\s+#|Put\s+#|#If|#Else|#End)/i.test(text))throw new VBError(`Unsupported statement: ${text.split(/\s/)[0]}`,445);
     text=text.replace(/^(Let|Set)\s+/i,'');
     const ts=tokenize(text);let depth=0,eq=null;
     for(const t of ts){if(t.value==='(')depth++;else if(t.value===')')depth--;else if(t.value==='='&&depth===0){eq=t;break;}}

@@ -11,10 +11,10 @@ const RESULTS=Object.freeze({
  now:'date',date:'date',time:'date',dateserial:'date',timeserial:'date',datevalue:'date',timevalue:'date',dateadd:'date',
  sqr:'double',exp:'double',log:'double',sin:'double',cos:'double',tan:'double',atn:'double',val:'double',
  fv:'double',pv:'double',pmt:'double',ipmt:'double',ppmt:'double',nper:'double',rate:'double',npv:'double',irr:'double',mirr:'double',sln:'double',syd:'double',ddb:'double',
- msgbox:'integer',doevents:'integer',rgb:'long',qbcolor:'long',filelen:'long',loadresstring:'string'
+ msgbox:'integer',doevents:'integer',rgb:'long',qbcolor:'long',filelen:'long',getattr:'integer',fileattr:'long',filedatetime:'date',loadresstring:'string'
 });
 const LENGTHS=Object.freeze({byte:1,integer:2,boolean:2,long:4,single:4,double:8,currency:8,date:8,decimal:16,error:16});
-const VARIANT_STRINGS=new Set(['left','right','mid','trim','ltrim','rtrim','ucase','lcase','space','string','chr','chrw','str','hex','oct','format','error']);
+const VARIANT_STRINGS=new Set(['left','right','mid','trim','ltrim','rtrim','ucase','lcase','space','string','chr','chrw','strconv','str','hex','oct','format','error']);
 const TITLE=Object.freeze({empty:'Empty',null:'Null',integer:'Integer',long:'Long',single:'Single',double:'Double',currency:'Currency',date:'Date',string:'String',boolean:'Boolean',decimal:'Decimal',error:'Error',byte:'Byte'});
 export function installScalarLibrary(map,vm){
  for(const [key,original] of map){

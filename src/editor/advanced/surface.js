@@ -1,3 +1,4 @@
+import {DebugInlineValues} from './debug-inline-values.js';
 import {guardLinkedEditingCancellation} from './monaco-compat.js';
 import {chooseSnippet,navigateLanguageLocation} from './navigation.js';
 import {fromDiagnostic,fromRange} from './protocol-converters.js';
@@ -36,6 +37,7 @@ export class AdvancedSurface {
     const view=this.view,state={view,pane,disposables:[],decorations:view.createDecorationsCollection()};this.views.push(state);
     guardLinkedEditingCancellation(view,error=>this.runtime.report(error));
     const viewDisposables=state.disposables;
+    if(!this.xaml){state.inlineValues=new DebugInlineValues(this,view);viewDisposables.push(state.inlineValues);}
     const activate=()=>{if(this.view!==view){this.peek?.dispose(false);this.view=view;}this.runtime.lastActive=this;};
     viewDisposables.push(view.onDidChangeCursorSelection(()=>{if(this.view===view)this.cursorChanged();}));
     viewDisposables.push(view.onDidFocusEditorText(()=>{
@@ -43,9 +45,9 @@ export class AdvancedSurface {
       if(!this.xaml&&this.runtime.ide.activeModule?.id!==this.record.moduleId)this.runtime.ide.openDocument(this.record.moduleId,'code');
       this.cursorChanged();
     }));
-    viewDisposables.push(view.onDidCompositionStart(()=>{this.composing=true;this.compositionBefore=this.record.lastText;}));
+    viewDisposables.push(view.onDidCompositionStart(()=>{this.composing=true;this.refreshInlineValues();this.compositionBefore=this.record.lastText;}));
     viewDisposables.push(view.onDidCompositionEnd(()=>{
-      this.composing=false;if(this.compositionBefore!==undefined){const before=this.compositionBefore;this.compositionBefore=undefined;try{this.commit(before,this.record.model.getValue(),null);}catch(error){this.runtime.report(error);this.runtime.setText(this.record,before);}}
+      this.composing=false;if(this.compositionBefore!==undefined){const before=this.compositionBefore;this.compositionBefore=undefined;try{this.commit(before,this.record.model.getValue(),null);}catch(error){this.runtime.report(error);this.runtime.setText(this.record,before);}}this.refreshInlineValues();
     }));
     viewDisposables.push(view.onMouseDown(event=>{
       if(!this.xaml&&event.target.type===this.monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN&&event.target.position){
@@ -155,9 +157,11 @@ export class AdvancedSurface {
     this.select(start+String(text).length);this.editKind=null;
   }
   readOnly(){return this.xaml?this.runtime.ide.runState!=='design'||!!this.legacy.input.readOnly||!!this.runtime.ide.documents.designers.get(this.record.moduleId)?.locked:this.runtime.ide.runState==='running'||!!this.legacy.readOnly;}
-  updateReadOnly(){for(const {view}of this.views)view.updateOptions({readOnly:this.readOnly()});}
+  refreshInlineValues(){for(const state of this.views)state.inlineValues?.refresh();}
+  updateReadOnly(){for(const {view}of this.views)view.updateOptions({readOnly:this.readOnly()});this.refreshInlineValues();}
   appearance(){const a=this.runtime.ide.appearance;for(const {view}of this.views)view.updateOptions({fontSize:a.editorSize||13,fontFamily:a.editorFont||'monospace',lineHeight:(a.editorSize||13)+4});this.record.model.updateOptions({tabSize:this.runtime.ide.project.settings.tabWidth||4,insertSpaces:true});}
   decorate(){
+    this.refreshInlineValues();
     if(!this.view||this.xaml)return;
     const e=this.legacy,model=this.record.model,name=e.module?.name?.toLowerCase(),decorations=[];
     for(const bp of e.breakpoints||[])if(bp.module?.toLowerCase()===name&&bp.line>=1&&bp.line<=model.getLineCount())decorations.push({range:new this.monaco.Range(bp.line,1,bp.line,1),options:{glyphMargin:{position:this.monaco.editor.GlyphMarginLane.Left},glyphMarginClassName:'advanced-breakpoint'+(bp.enabled===false?' disabled':''),glyphMarginHoverMessage:{value:bp.condition?'Breakpoint: '+bp.condition:'Breakpoint',isTrusted:false},minimap:{color:'#b91c1c',position:this.monaco.editor.MinimapPosition.Gutter},overviewRuler:{color:'#b91c1c',position:1}}});

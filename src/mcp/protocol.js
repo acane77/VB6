@@ -1,3 +1,4 @@
+import {validateSchemaValue} from './schema.js';
 /** Transport-independent MCP primitives. No browser globals, dependencies, or dynamic code. */
 export const MCP_VERSION = '2026-07-28';
 export const MCP_LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
@@ -117,28 +118,10 @@ export function httpURL(value, {base, allowHTTP = false} = {}) {
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.hash || url.protocol === 'http:' && !loopback && !allowHTTP) throw new McpError(-32602, 'Use HTTPS, or HTTP on localhost. Credentials and fragments are not allowed in endpoint URLs.');
   return url;
 }
-/** Bounded validator for the JSON Schema subset used by this server's tool definitions. */
+/** Offline bounded schema assertions for host-authored tool definitions. */
 export function validateArguments(value, schema, path = 'arguments', depth = 0) {
-  if (depth > 32) throw new McpError(-32602, 'Arguments are too deeply nested.');
-  const fail = text => { throw new McpError(-32602, path + ': ' + text); };
-  const type = schema.type;
-  if (type === 'object' && !isRecord(value) || type === 'array' && !Array.isArray(value) || type === 'string' && typeof value !== 'string' || type === 'boolean' && typeof value !== 'boolean' || type === 'integer' && !Number.isSafeInteger(value) || type === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) fail('expected ' + type);
-  if (schema.enum && !schema.enum.includes(value)) fail('unsupported value');
-  if (typeof value === 'string' && (value.length > (schema.maxLength ?? MCP_LIMIT) || value.length < (schema.minLength ?? 0))) fail('invalid length');
-  if (typeof value === 'number' && (value < (schema.minimum ?? -Infinity) || value > (schema.maximum ?? Infinity))) fail('out of range');
-  if (isRecord(value)) {
-    for (const name of schema.required || []) if (!Object.hasOwn(value, name)) fail('missing ' + name);
-    for (const [key, child] of Object.entries(value)) {
-      if (['__proto__','prototype','constructor'].includes(key)) fail('unsafe key');
-      if (schema.properties && Object.hasOwn(schema.properties, key)) validateArguments(child, schema.properties[key], path + '.' + key, depth + 1);
-      else if (schema.additionalProperties === false) fail('unexpected ' + key);
-      else validateArguments(child, {}, path + '.' + key, depth + 1);
-    }
-  }
-  if (Array.isArray(value)) {
-    if (value.length > (schema.maxItems ?? 10000)) fail('too many items');
-    value.forEach((child, i) => validateArguments(child, schema.items || {}, path + '[' + i + ']', depth + 1));
-  }
+  try { validateSchemaValue(value, schema, {path, depth}); }
+  catch (error) { throw new McpError(-32602, error.message); }
 }
 export function pageItems(items, cursor, size = 100) {
   let offset = 0;

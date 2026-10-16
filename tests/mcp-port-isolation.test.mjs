@@ -7,7 +7,7 @@ import {TASK_EXTENSION} from '../src/mcp/tasks.js';
 
 function fixture(t) {
   const authority = new AbortController();
-  const server = new McpServer({tools: [{name: 'vb6.agent.wait', inputSchema: {type: 'object'},
+  const server = new McpServer({tools: [{name: 'vb6.agent.wait', annotations: {readOnlyHint:true}, inputSchema: {type: 'object'},
     execute: (_args, context) => new Promise(resolve => context.signal.addEventListener('abort', () => resolve({cancelled: true}), {once: true}))}],
     resources: async () => [], authoritySignal: authority.signal});
   const connections = [0, 1].map(() => {
