@@ -41,7 +41,7 @@ export function installLinuxExport(ide, api) {
       el('span', {}, caption), input);
     const clearDownload = () => {releaseDownload?.(); releaseDownload = undefined; downloads.replaceChildren();};
     const diagnostics = error => error.diagnostics?.length
-      ? error.diagnostics.map(item => [item.module, item.line, item.message].filter(value => value !== undefined && value !== '').join(': ')).join('\n')
+      ? error.diagnostics.map(item => [item.module || item.source, item.line, item.message].filter(value => value !== undefined && value !== '').join(': ')).join('\n')
       : error.message;
     const content = el('div', {},
       el('p', {}, 'Export a native Linux x86-64 executable with GTK controls. Compilation works here, including in the offline standalone IDE.'),
