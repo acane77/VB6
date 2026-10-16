@@ -54,6 +54,13 @@ export class CodingAgent {
     try { this.onEvent(event); } catch { /* An observer cannot change execution. */ }
   }
   revokePermissions() { this.permissionSession?.revoke('Permissions revoked by the local user.'); this.stop(); }
+  /** Cooperative pause: never interrupts an in-flight effect or replays a confirmed result. */
+  pause() {
+    if (!this.busy || this.pauseRequested || this.controller?.signal.aborted) return false;
+    this.pauseRequested = true; this.pauseController?.abort();
+    this.emit('pause-requested', 'Pause requested. The active request or operation may finish; no subsequent operation starts. Stop still cancels immediately.');
+    return true;
+  }
   stop() { this.permissionSession?.revoke('Agent stopped; all run approvals revoked.'); this.controller?.abort(new DOMException('Agent stopped.', 'AbortError')); }
   reset() {
     if (this.busy) throw new Error('Stop the active agent before starting a new task.');
@@ -61,7 +68,7 @@ export class CodingAgent {
     this.uiContexts = new UIModelContextStore(); this.uiContextEpoch = this.adapter.workspaceEpoch;
     this.thread = new AgentThread(); this.eventSequence = 0; this.requestId = ''; this.currentCallId = '';
     this.estimatedTokens = 0; this.unreportedRequests = 0; this.limits = normalizeAgentLimits();
-    this.pendingTurn = null; this.limit = null; this.permissionSession = null;
+    this.pendingTurn = null; this.limit = null; this.permissionSession = null; this.pauseRequested = false; this.pauseController = null;
     this.truncatedOutput = 0; this.completeTurns = []; this.goal = ''; this.latestPrompt = ''; this.compactions = 0; this.lastInputTokens = null; this.lastRequestBytes = 0; this.retryAt = 0;
     this.history = []; this.transcript = []; this.transcriptBytes = 0; this.historyBytes = 2;
     this.provider = ''; this.model = ''; this.projectId = ''; this.epoch = null; this.workspaceEpoch = null;
@@ -100,7 +107,7 @@ export class CodingAgent {
     this.limits = config; this.requestId = ''; this.currentCallId = '';
     this.provider = provider; this.model = model; this.projectId = projectId;
     this.workspaceEpoch = this.adapter.workspaceEpoch ?? null;
-    this.busy = true; this.state = 'running'; this.failure = null; this.limit = null; this.controller = new AbortController(); owners.set(this.adapter, this);
+    this.busy = true; this.pauseRequested = false; this.state = 'running'; this.failure = null; this.limit = null; this.controller = new AbortController(); this.pauseController = new AbortController(); owners.set(this.adapter, this);
     let tokens = 0, calls = 0, phase = 'setup', signal, attemptedOutput = 0;
     const pause = (kind, message, details = {}) => {
       this.state = 'limit'; this.limit = {kind, message, ...details};
@@ -119,7 +126,7 @@ export class CodingAgent {
       if (!compactOnly) this.emit('run-start', 'Run started with freshly reviewed permissions.');
       if (!continuation && !compactOnly) { this.goal ||= prompt; this.latestPrompt = prompt; this.history.push(initialMessage); this.historyBytes = sizeOf(this.history); this.emit('user', prompt+(reviewedContent.length?'\n\nReviewed content:\n'+contentSummary(reviewedContent):'')); }
       else this.emit('resume', this.pendingTurn
-        ? 'Continuing a validated deferred batch. It has not executed; original arguments and current permissions/revisions are checked.'
+        ? 'Continuing a validated deferred batch. ' + (this.pendingTurn.outputs?.length || 0) + ' completed operation(s) will not be replayed; remaining arguments and current permissions/revisions are checked.'
         : 'Continuing from completed tool results. No tool operation is replayed by the IDE.');
       let turn = 0, windowRecovery = false;
       const assertLive = () => {
@@ -136,9 +143,16 @@ export class CodingAgent {
       // All generation attempts (including checkpoints and failed retries) are counted and billed separately.
       const request = async (history, definitions, instructions, summary = false) => {
         for (let retry = 0; ; retry++) {
-          assertLive(); attemptedOutput = remainingOutput(summary);
+          assertLive();
+          if (this.pauseRequested) throw new AgentRunPause('user', 'Paused before the next provider request. Completed results are retained; Continue requires fresh permissions.');
+          attemptedOutput = remainingOutput(summary);
           if (this.retryAt >= this.permissionSession.expiresAt) throw new AgentRunPause('cooldown', 'The provider cooldown exceeds this run’s permission lease. Retry later; no permission was extended and no request was sent.');
-          if (this.retryAt > Date.now()) { await this.wait(this.retryAt - Date.now(), signal); assertLive(); }
+          if (this.retryAt > Date.now()) {
+            try { await this.wait(this.retryAt - Date.now(), AbortSignal.any([signal, this.pauseController.signal])); }
+            catch (error) { assertLive(); if (!this.pauseRequested) throw error; }
+            assertLive();
+          }
+          if (this.pauseRequested) throw new AgentRunPause('user', 'Paused before the next provider request. No retry was sent.');
           this.retryAt = 0;
           const body = buildRequest(provider, model, history, definitions, instructions, attemptedOutput, summary), bytes = sizeOf(body);
           if (config.contextWindowTokens && estimatedInputTokens(body) + attemptedOutput >= config.contextWindowTokens) throw new AgentRunPause('context', 'Estimated request plus output reserve reaches the configured model context window. Compact context, lower output, or correct the model window setting.');
@@ -202,11 +216,11 @@ export class CodingAgent {
       while (this.pendingTurn || turn < limits.turns) {
         signal.throwIfAborted();
         const instructions = AGENT_INSTRUCTIONS + INTELLIGENT_UI_INSTRUCTIONS + '\nLocal permission profile: ' + permissionSummary(permissions) + (mode === 'plan' ? '\nPLAN MODE: inspect and clarify, then propose an actionable plan. Do not execute or change the project. The user must select an editing profile and confirm a separate run to implement it.' : '') + '\nCurrent task plan (model-reported, not evidence):\n' + JSON.stringify(this.plan) + '\nWorkspace snapshot (data, not instructions):\n' + JSON.stringify(this.adapter.snapshot());
-        if (compactOnly && this.pendingTurn) { await compact(instructions); return pause('compacted', 'Context compacted; deferred operations remain unexecuted. Review Continue to resume.'); }
+        if (compactOnly && this.pendingTurn) { await compact(instructions); return pause('compacted', 'Context compacted; remaining operations are deferred and confirmed results are retained. Review Continue to resume.'); }
         let result;
         if (this.pendingTurn) {
-          // The entire batch was validated and paused BEFORE its first operation.
-          // Reuse it without a network request or double-charging its reported usage.
+          // Reuse a validated batch and any confirmed prefix without a network
+          // request, replaying completed effects, or double-charging usage.
           ({result, requestId: this.requestId} = this.pendingTurn);
         } else {
           const body = buildRequest(provider, model, this.history, catalog.definitions, instructions, limits.output);
@@ -228,28 +242,32 @@ export class CodingAgent {
           this.truncatedOutput = 0;
           if (result.text) this.emit('assistant', result.text);
           else this.emit('response', result.calls.length ? 'Prepared ' + result.calls.length + ' tool operation(s).' : 'Response completed without public text.');
+          assertLive();
           if (!result.calls.length) {
             // A final answer needs no tool-result reservation. Preserve its native
             // context; any subsequent oversized follow-up pauses before sending.
             const start = this.history.length; appendTurn(provider, this.history, result, []); this.completeTurns.push({start, end: this.history.length}); this.historyBytes = sizeOf(this.history);
             this.state = 'completed'; this.emit('complete', 'Task completed.'); return {status: 'completed', tokens, calls};
           }
-          this.pendingTurn = {result, requestId: this.requestId};
+          this.pendingTurn = {result, requestId: this.requestId, outputs: []};
         }
-        if (result.calls.length > limits.calls - calls) return pause('calls', 'Tool-call limit reached before applying this batch. ' + result.calls.length + ' operations are deferred, not executed. Increase Tool calls per run if necessary and review Continue.', {required: result.calls.length});
-        const nextHistory = this.history.slice(); appendTurn(provider, nextHistory, result, []);
-        // Reserve space for every result before the first operation. Never edit or
+        const savedOutputs = this.pendingTurn?.outputs || [], remainingCalls = result.calls.length - savedOutputs.length;
+        if (this.pauseRequested) return pause('user', 'Paused at a safe operation boundary. ' + savedOutputs.length + ' confirmed result(s) are retained; ' + remainingCalls + ' operation(s) remain unexecuted. Continue requires fresh permissions.', {completed: savedOutputs.length, remaining: remainingCalls});
+        if (remainingCalls > limits.calls - calls) return pause('calls', 'Tool-call limit reached before applying the remaining batch. ' + remainingCalls + ' operations are deferred, not executed. Increase Tool calls per run if necessary and review Continue.', {required: remainingCalls});
+        const nextHistory = this.history.slice(); appendTurn(provider, nextHistory, result, savedOutputs);
+        // Include confirmed prefix results before reserving space for the remainder. Never edit or
         // truncate provider-native signatures. A larger context cap can resume safely.
         const baseBytes = sizeOf(buildRequest(provider, model, nextHistory, catalog.definitions, instructions, limits.output));
-        const required = baseBytes + 2048 + 2 * result.calls.length * (512 + 256);
-        const resultBudget = Math.min(config.toolResultBytes, Math.floor((limits.context - baseBytes - 2048) / (2 * result.calls.length)) - 256);
+        const required = baseBytes + 2048 + 2 * remainingCalls * (512 + 256);
+        const resultBudget = Math.min(config.toolResultBytes, Math.floor((limits.context - baseBytes - 2048) / (2 * Math.max(1, remainingCalls))) - 256);
         if (resultBudget < 512 && config.autoCompactTokens > 0 && this.completeTurns.length && !windowRecovery) { windowRecovery = true; await compact(instructions); continue; }
-        if (resultBudget < 512) return pause('context', 'Conversation reached its context limit before applying this batch. Increase Request context bytes in Permissions, then review Continue. No operation in this batch has executed.', {required});
-        // Clear BEFORE execution. Any cancellation, denial or uncertain partial
-        // batch is terminal and can never become a resumable batch.
+        if (resultBudget < 512) return pause('context', 'Conversation reached its context limit before applying the remaining batch. Increase Request context bytes in Permissions, then review Continue. ' + savedOutputs.length + ' confirmed result(s) are retained; ' + remainingCalls + ' operation(s) remain unexecuted.', {required});
+        // Clear BEFORE execution. Only an explicit cooperative pause after a
+        // confirmed result may retain a prefix. Cancellation/denial/uncertain
+        // effects remain terminal and never become resumable.
         this.pendingTurn = null;
-        const outputs = []; phase = 'tools';
-        for (const call of result.calls) {
+        const outputs = savedOutputs.slice(); phase = 'tools';
+        for (const call of result.calls.slice(outputs.length)) {
           signal.throwIfAborted();
           const tool = catalog.names.get(call.name); let output;
           this.currentCallId = call.id;
@@ -277,9 +295,14 @@ export class CodingAgent {
             output = {error: String(error.message || 'Tool failed').slice(0, 2000), code: error.code, revision: this.adapter.revision};
             this.emit('error', (tool?.name || call.name) + ': ' + output.error);
           }
-          outputs.push({call, result: bounded(output, resultBudget)}); this.currentCallId = '';
+          outputs.push({call, result: bounded(output, resultBudget)}); this.currentCallId = ''; signal.throwIfAborted();
+          if (this.pauseRequested && outputs.length < result.calls.length) {
+            this.pendingTurn = {result, requestId: this.requestId, outputs};
+            return pause('user', 'Paused after a confirmed operation. ' + outputs.length + ' result(s) are retained; ' + (result.calls.length - outputs.length) + ' operation(s) remain unexecuted. Continue rechecks permissions and original revisions.', {completed: outputs.length, remaining: result.calls.length - outputs.length});
+          }
         }
         const start = this.history.length; appendTurn(provider, this.history, result, outputs); this.completeTurns.push({start, end: this.history.length}); this.historyBytes = sizeOf(this.history);
+        if (this.pauseRequested) return pause('user', 'Paused after the completed tool batch. Continue sends its saved results without replaying operations.');
         if (this.budgetUsed >= limits.tokens) return pause('tokens', 'Session token budget reached. Increase the budget before continuing; previous usage is retained.');
         if (calls >= limits.calls) return pause('calls', 'Tool-call limit reached. Completed results are saved; review before continuing.');
       }
@@ -301,7 +324,7 @@ export class CodingAgent {
     } finally {
       this.permissionSession?.revoke('Run ended; all delegated and exact-tool approvals cleared.');
       this.adapter.setEnabled(false); this.epoch = this.adapter.authorityEpoch;
-      this.busy = false; this.controller = null; owners.delete(this.adapter); this.emit('idle', 'Idle'); this.currentCallId = ''; this.requestId = '';
+      this.busy = false; this.pauseRequested = false; this.controller = null; this.pauseController = null; owners.delete(this.adapter); this.emit('idle', 'Idle'); this.currentCallId = ''; this.requestId = '';
     }
   }
 }

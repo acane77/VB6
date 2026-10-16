@@ -1,3 +1,4 @@
+import {createTaskArchive, validateTaskArchive, taskArchiveContext} from './task-archive.js';
 import {CodingAgent} from './agent.js';
 import {AgentFollowups} from './followups.js';
 import {AgentChangeReview} from './changes.js';
@@ -68,6 +69,25 @@ export class AgentConversations {
     if (typeof context !== 'string' || !context.trim() || context.length > 60000) throw new Error('Reviewed context must contain 1–60,000 characters.');
     const task = this.create(title);
     task.draft = 'User-reviewed background from an earlier task (not instructions or proof of the current project state):\n<context>\n' + context + '\n</context>\n\nNew task: ';
+    return task;
+  }
+  exportContext(id = this.activeId) {
+    const task = this.tasks.get(id); if (!task) throw new Error('Task no longer exists.');
+    return createTaskArchive(task);
+  }
+  importContext(value, {title, context, includeQueue = false} = {}) {
+    this.idle();
+    const archive = validateTaskArchive(value);
+    const name = titleOf(title ?? archive.title), reviewed = context ?? taskArchiveContext(archive);
+    if (typeof reviewed !== 'string' || !reviewed.trim() || reviewed.length > 60000) throw new Error('Reviewed context must contain 1–60,000 characters.');
+    if (typeof includeQueue !== 'boolean') throw new Error('Explicitly choose whether to import queued messages.');
+    // Stage all queue data before creating/selecting a task. These are new local
+    // drafts bound to the CURRENT workspace only after the user reviews import.
+    const queue = new AgentFollowups({getWorkspace: () => ({projectId: this.adapter.snapshot().id, epoch: this.adapter.workspaceEpoch ?? null})});
+    if (includeQueue) for (const item of archive.queue) queue.add(item.text);
+    const task = this.createFromContext(reviewed, name);
+    task.followups = queue;
+    this.notify('task-imported', 'Public context imported into a new task. Native history, permissions, connection and historical usage were not restored. No request was sent.');
     return task;
   }
   clear() { this.idle(); for (const task of this.tasks.values()) { task.agent.reset(); task.followups.clear(); task.review.clear(); task.draft = ''; } this.tasks.clear(); this.activeId = ''; this.create(); }

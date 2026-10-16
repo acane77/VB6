@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Real GPU selection/retry and live Options regressions; no hardware speed claims."""
-import argparse, functools, http.server, json, os, shlex, shutil, threading, traceback
+import argparse, functools, http.server, json, os, shutil, threading, traceback
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from rendering_launch import rendering_launch_flags
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'reports/rendering/recovery'
@@ -20,10 +21,7 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Quiet, directory=ROOT))
 threading.Thread(target=server.serve_forever, daemon=True).start()
 url = f'http://127.0.0.1:{server.server_port}/'
-flags = ['--no-sandbox']
-if args.software_gpu:
-    flags += ['--enable-unsafe-webgpu', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--use-vulkan=swiftshader', '--disable-partial-raster', '--run-all-compositor-stages-before-draw']
-flags += shlex.split(os.environ.get('RENDERING_BROWSER_FLAGS', ''))
+flags = rendering_launch_flags(software_gpu=args.software_gpu)
 results = []
 def load(page, ide=False):
     if args.offline: page.set_content((ROOT/'dist/VB6-Studio-Web.html').read_text() if ide else '<!doctype html><body></body>')

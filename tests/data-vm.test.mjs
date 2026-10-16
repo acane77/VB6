@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {compileProject} from '../src/language/compiler.js';
@@ -77,4 +78,103 @@ test('named provider timeout applies unless explicitly overridden, including com
 });
 test('native drivers never pretend the client readOnly flag replaces server database permissions',async()=>{
  await assert.rejects(()=>createNativeDriver({driver:'pg',readOnly:true},{load:()=>{throw Error('must not load');}}),/read-only database account/);
+});
+
+test('compiled VB opens a parameterized Command directly and reads restricted schema rowsets',async()=>{
+ assert.deepEqual(await run(`Dim cn As New ADODB.Connection, cmd As New ADODB.Command, rs As New ADODB.Recordset
+cn.Open "Local"
+cn.Execute "CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT)"
+cn.Execute "INSERT INTO customers VALUES(1,'Ada'),(2,'Grace')"
+Set cmd.ActiveConnection = cn
+cmd.CommandText = "SELECT name FROM customers WHERE id=?"
+cmd.Parameters.Append cmd.CreateParameter("id", adInteger, adParamInput, 0, 2)
+rs.Open cmd
+Debug.Print rs.Fields("name").Value
+rs.Close
+Set rs = cn.OpenSchema(adSchemaColumns, Array(Empty, Empty, "CUSTOMERS", "NAME"))
+Debug.Print rs.RecordCount, rs.Fields("DATA_TYPE").Value
+rs.Close
+Set rs = cn.OpenSchema(adSchemaPrimaryKeys, Array(Empty, Empty, "customers"))
+Debug.Print rs.Fields("COLUMN_NAME").Value
+cn.Close`),['Grace','1 203','id']);
+});
+test('compiled VB exposes new cursor and field members with classic default values',async()=>{
+ assert.deepEqual(await run(`Dim rs As New ADODB.Recordset, first As Variant, last As Variant
+rs.Fields.Append "id", adInteger
+rs.Fields.Append "memo", adLongVarWChar, 100, adFldLong
+rs.Fields.Append "unused", adInteger
+rs.Fields.Delete "unused"
+rs.Open
+rs.AddNew Array("id", "memo"), Array(1, "original")
+rs.AddNew Array("id", "memo"), Array(2, "second")
+last = rs.Bookmark
+rs.MoveFirst
+first = rs.Bookmark
+Debug.Print rs.CompareBookmarks(first, last) = adCompareLessThan
+rs.Filter = "(id=1) OR (id=2 AND memo='second')"
+Debug.Print rs.RecordCount
+rs.Fields("memo").AppendChunk "ab"
+rs.Fields("memo").AppendChunk "cd"
+rs.Update
+Debug.Print rs.Fields("memo").GetChunk(2), rs.Fields("memo").GetChunk(2)
+Debug.Print rs.Fields("memo").Attributes = adFldLong
+rs.Find "id=1", 1, adSearchBackward, last
+Debug.Print rs.Fields("id").Value
+rs.Close`),['True','2','ab cd','True','1']);
+});
+
+test('compiled VB Byte arrays can be appended through a long binary Field',async()=>{
+ assert.deepEqual(await run(`Dim rs As New ADODB.Recordset, bytes(0 To 1) As Byte, result As Variant
+rs.Fields.Append "payload", adLongVarBinary, 100, adFldLong
+rs.Open
+rs.AddNew
+bytes(0) = 7
+bytes(1) = 255
+rs.Fields("payload").AppendChunk bytes
+rs.Update
+result = rs.Fields("payload").GetChunk(2)
+Debug.Print result(0), result(1)
+rs.Close`),['7 255']);
+});
+
+test('compiled VB reads independent typed BLOB arrays from ADO, DAO and RDO values and GetRows',async()=>{
+ assert.deepEqual(await run(`Dim cn As New ADODB.Connection, rs As ADODB.Recordset, result As Variant, rows As Variant
+Dim db As Object, dao As Object, rc As Object, rdo As Object
+cn.Open "Local"
+cn.Execute "CREATE TABLE blobs(id INTEGER PRIMARY KEY, payload BLOB)"
+cn.Execute "INSERT INTO blobs VALUES(1, x'07FF')"
+Set rs = cn.Execute("SELECT payload FROM blobs")
+result = rs.Fields("payload").Value
+Debug.Print TypeName(result), result(0), result(1)
+result(0) = 100
+result = rs("payload")
+Debug.Print result(0)
+rows = rs.GetRows()
+result = rows(0, 0)
+Debug.Print TypeName(result), result(1)
+Set db = OpenDatabase("Local")
+Set dao = db.OpenRecordset("blobs")
+result = dao.Fields("payload").Value
+Debug.Print result(1)
+rows = dao.GetRows()
+result = rows(1, 0)
+Debug.Print result(0)
+Set rc = rdoEnvironments(0).OpenConnection("Local", rdDriverNoPrompt, False, "Local")
+Set rdo = rc.OpenResultset("SELECT payload FROM blobs", rdOpenStatic)
+result = rdo.rdoColumns("payload").Value
+Debug.Print result(1)
+rows = rdo.GetRows()
+result = rows(0, 0)
+Debug.Print result(0)
+rc.Close
+cn.Close
+db.Close`),['Byte() 7 255','7','Byte() 255','255','7','255','7']);
+});
+
+test('shared exported-browser acceptance fixture executes through the source VM',async()=>{
+ const code=await fs.readFile(new URL('./fixtures/data-client-completeness.bas',import.meta.url),'utf8');
+ const project=normalizeProject({schema:1,name:'DataClientAcceptance',startup:'Sub Main',modules:[{name:'MainModule',kind:'module',code}]});
+ const compiled=compileProject(project);assert.deepEqual(compiled.diagnostics,[]);
+ const output=[],vm=new VirtualMachine(compiled,{print:s=>output.push(s)});
+ try{await vm.start();assert.deepEqual(output,['Grace','1 203','id','True','2','ab cd','Byte() 7 255','7','1']);}finally{await vm.data.close();}
 });

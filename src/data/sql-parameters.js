@@ -9,6 +9,7 @@ export function sqlTokens(source) {
     if(/\s/.test(c)){i++;continue;}
     if(source.startsWith('--',i)){i=source.indexOf('\n',i);if(i<0)break;continue;}
     if(source.startsWith('/*',i)){const end=source.indexOf('*/',i+2);assertData(end>=0,'Unterminated SQL comment');i=end+2;continue;}
+    assertData(tokens.length<100000,'SQL token limit exceeded',7);
     if(c==="'"||c==='"'||c==='`'||c==='['){
       const close=c==='['?']':c;let value='',closed=false;i++;
       while(i<source.length){const ch=source[i++];if(ch===close){if(source[i]===close){value+=close;i++;}else{closed=true;break;}}else value+=ch;}
@@ -20,7 +21,6 @@ export function sqlTokens(source) {
     if(word){i+=word[0].length;tokens.push({kind:'word',value:word[0],start,end:i});continue;}
     const pair=source.slice(i,i+2);i+=['<=','>=','<>','!='].includes(pair)?2:1;
     tokens.push({kind:'symbol',value:source.slice(start,i),start,end:i});
-    assertData(tokens.length<=100000,'SQL token limit exceeded',7);
   }
   return tokens;
 }

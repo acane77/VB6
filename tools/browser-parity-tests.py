@@ -26,7 +26,10 @@ def resource_tests(browser):
         page.locator('.designer-pane [data-control="Image1"] img').wait_for()
         page.wait_for_function('document.querySelector(".designer-pane [data-control=Image1] img").naturalWidth === 1')
         frame=suite.start_ide(page)
-        frame.wait_for_function('typeof vb6Application !== "undefined" && vb6Application.forms[0].controlMap.get("picture1").surface?.picture?.naturalWidth === 1')
+        picture=frame.evaluate('''async()=>{const surface=vb6Application.forms[0].controlMap.get("picture1").surface;
+          const loaded=await surface.pictureReady;
+          return {loaded,width:surface.picture?.width||0,height:surface.picture?.height||0,error:surface.pictureError};}''')
+        check(picture=={'loaded':True,'width':1,'height':1,'error':None})
         check(frame.locator('[data-control="Text1"] textarea').input_value()=='From FRX: €\nSecond line')
         check(frame.locator('[data-control="List1"] option').all_text_contents()==['One','Two','€ Three'])
         check(frame.evaluate('vb6Application.vm.lastError?.message || null') is None)

@@ -8,10 +8,10 @@ import json
 import os
 from pathlib import Path
 import shutil
-import shlex
 import subprocess
 import threading
 from playwright.sync_api import sync_playwright
+from rendering_launch import rendering_launch_flags
 
 ROOT=Path(__file__).resolve().parents[1]
 ENGINE=os.environ.get('VB6_BROWSER','chromium')
@@ -32,8 +32,8 @@ try:
     if ENGINE=='chromium':
         executable=os.environ.get('CHROMIUM_PATH') or os.environ.get('RENDERING_BROWSER_EXECUTABLE') or shutil.which('chromium')
         if executable: options['executable_path']=executable
-        options['args']=['--no-sandbox','--disable-dev-shm-usage']
-        if GPU:options['args']+=shlex.split(os.environ.get('GRAPHICS_GPU_FLAGS','--enable-unsafe-webgpu --enable-gpu --ignore-gpu-blocklist --enable-features=Vulkan --use-webgpu-adapter=swiftshader --disable-vulkan-surface --disable-gpu-rasterization'))
+        options['args']=rendering_launch_flags(software_gpu=GPU, base=('--no-sandbox','--disable-dev-shm-usage'))
+        report['flags']=options['args']
     browser=getattr(pw,ENGINE).launch(**options)
     report['browserVersion']=browser.version
     try:

@@ -1,7 +1,7 @@
-import {VBDecimal,VBCurrency,coerce} from '../runtime/values.js';
+import {VBArray,VBDecimal,VBCurrency,coerce} from '../runtime/values.js';
 import {ProviderRecordset} from './provider-recordset.js';
 import {DisconnectedRecordset,fieldValue} from './recordset.js';
-import {assertData,after,dataList,sameValue} from './common.js';
+import {assertData,after,dataList,sameValue,DATA_LIMITS} from './common.js';
 
 const copy = value => value instanceof Date ? new Date(value) : value instanceof Uint8Array ? value.slice() : value;
 const copyRow = row => Object.fromEntries(Object.entries(row || {}).map(([key,value]) => [key,copy(value)]));
@@ -22,19 +22,42 @@ export class ConnectedRecordset extends ProviderRecordset {
     super(context);
     this._family=family(this);this._deletedCurrent=null;this._pageSize=10;this._lockExplicit=false;
     this._resync=null;this._underlying=new WeakMap();this._boundConnection=null;
-    const originalItem=this.Fields.Item.bind(this.Fields);
+    const originalItem=this.Fields.Item.bind(this.Fields),decorated=new WeakSet();
     this.Fields.Item=key=>{
-      const field=originalItem(key),rs=this,col=this.column(key);
+      const field=originalItem(key),rs=this,col=this.column(key);if(decorated.has(field))return field;decorated.add(field);
       Object.defineProperties(field,{
-        OriginalValue:{get(){const row=rs.current();const entry=rs._family.batch.get(row);return copy(entry?entry.before?.[col.Name]??null:rs._pending?.row===row?rs._pending.before?.[col.Name]??null:row[col.Name]);}},
-        UnderlyingValue:{get(){const row=rs.current();assertData(rs._resync,'UnderlyingValue requires a provider with keyed refresh',3251);return after(rs._resync(row,rs._family.batch.get(row)?.before),values=>{assertData(values,'Record was deleted from the data source',3021);rs._underlying.set(row,copyRow(values));return copy(values[col.Name]);});}},
+        OriginalValue:{get(){const row=rs.fieldRow(col);const entry=rs._family.batch.get(row);return copy(entry?entry.before?.[col.Name]??null:rs._pending?.row===row?rs._pending.before?.[col.Name]??null:row[col.Name]);}},
+        UnderlyingValue:{get(){const row=rs.fieldRow(col);assertData(rs._resync,'UnderlyingValue requires a provider with keyed refresh',3251);return after(rs._resync(row,rs._family.batch.get(row)?.before),values=>{assertData(rs.State&&rs.rows.includes(row),'Recordset changed during refresh',3704);assertData(values,'Record was deleted from the data source',3021);rs._underlying.set(row,copyRow(values));return copy(values[col.Name]);});}},
         ActualSize:{get(){const value=field.Value;return value==null?0:typeof value==='string'?value.length*2:value instanceof Uint8Array?value.length:[2,11,18].includes(col.Type)?2:[16,17].includes(col.Type)?1:[5,6,7,20,21].includes(col.Type)?8:4;}}
       });
-      let chunkPosition=0,chunkRow=null;
-      field.GetChunk=length=>{length=Number(length);assertData(Number.isSafeInteger(length)&&length>=0,'Invalid chunk size',5);const row=rs.current();if(chunkRow!==row){chunkRow=row;chunkPosition=0;}const value=field.Value;if(value==null)return null;assertData(typeof value==='string'||value instanceof Uint8Array,'GetChunk requires a text or binary field',3251);const chunk=value.slice(chunkPosition,chunkPosition+length);chunkPosition+=chunk.length;return chunk;};
-      field.AppendChunk=value=>{const old=field.Value;assertData(typeof value==='string'||value instanceof Uint8Array,'AppendChunk requires text or bytes',13);assertData(old==null||typeof old===typeof value&&((old instanceof Uint8Array)===(value instanceof Uint8Array)),'Chunk type mismatch',13);if(typeof value==='string')field.Value=(old||'')+value;else{const bytes=new Uint8Array((old?.length||0)+value.length);if(old)bytes.set(old);bytes.set(value,old?.length||0);field.Value=bytes;}};
+      field.GetChunk=length=>{
+        length=Number(length);assertData(Number.isSafeInteger(length)&&length>=0,'Invalid chunk size',5);
+        const row=rs.fieldRow(col),value=row[col.Name];if(value==null)return null;
+        assertData(typeof value==='string'||value instanceof Uint8Array,'GetChunk requires a text or binary field',3251);
+        const chunk=rs.chunkState(col,row,'read'),part=value.slice(chunk.position,chunk.position+length);chunk.position+=part.length;return part;
+      };
+      field.AppendChunk=value=>{
+        if(value instanceof VBArray){assertData(value.bounds.length===1,'Chunk byte arrays must have one dimension',13);value=fieldValue({Type:205},value);}
+        assertData(typeof value==='string'||value instanceof Uint8Array,'AppendChunk requires text or bytes',13);
+        const row=rs.fieldRow(col),old=row[col.Name];
+        assertData(old==null||typeof old===typeof value&&((old instanceof Uint8Array)===(value instanceof Uint8Array)),'Chunk type mismatch',13);
+        const continuing=rs._family.chunk?.column===col&&rs._family.chunk.row===row&&rs._family.chunk.mode==='write';
+        const previous=continuing?old:null,size=(previous?.length||0)+value.length;
+        assertData(size<=DATA_LIMITS.bytes/(typeof value==='string'?2:1),'Chunk allocation limit exceeded',7);
+        let next;if(typeof value==='string')next=(previous||'')+value;
+        else{next=new Uint8Array(size);if(previous)next.set(previous);next.set(value,previous?.length||0);}
+        rs.edit(col,next);rs._family.chunk={column:col,row,mode:'write',position:0};
+      };
       return field;
     };
+  }
+  fieldAccess(column,row){
+    if(this._family?.chunk&&(this._family.chunk.column!==column||this._family.chunk.row!==row))this._family.chunk=null;
+  }
+  chunkState(column,row,mode){
+    const family=this._family;
+    if(!family.chunk||family.chunk.column!==column||family.chunk.row!==row||family.chunk.mode!==mode)family.chunk={column,row,mode,position:0};
+    return family.chunk;
   }
   get ActiveConnection(){return this._activeConnection??null;}
   set ActiveConnection(value){
@@ -52,7 +75,8 @@ export class ConnectedRecordset extends ProviderRecordset {
     super.load(result,Number(lock)===4?3:Number(lock));
     previous?.members.delete(this);this._family=family(this);this._family.fetched=new Set(this.rows);
     this._family.nextBookmark=this._nextBookmark;this._lock=Number(lock);this._deletedCurrent=null;
-    this._resync=result.refresh||null;this._underlying=new WeakMap();this._boundConnection=this.ActiveConnection;
+    this._resync=result.refresh||null;this._underlying=new WeakMap();this._boundConnection=this.ActiveConnection;this._boundAdapter=this.ActiveConnection?.adapter;
+    if(this._boundConnection&&typeof this._boundConnection!=='string')(this._boundConnection._clientCursors??=new Set()).add(this);
     return this;
   }
   async Open(source,connection,cursor,lock,options){
@@ -71,7 +95,7 @@ export class ConnectedRecordset extends ProviderRecordset {
         if(mode===3)return this._family.fetched.has(row)&&!deleted;
         if(mode===5)return !!entry?.error;
       }
-      if(Array.isArray(mode))return mode.includes(this._bookmarks.get(row));
+      if(Array.isArray(mode))return this._bookmarkFilter.has(this._bookmarks.get(row));
       if(deleted&&row!==this._deletedCurrent)return false;
       return !this._predicate||this._predicate(row)||this._pending?.isNew&&this._pending.row===row;
     });
@@ -82,16 +106,16 @@ export class ConnectedRecordset extends ProviderRecordset {
   cursorRow(){this.requireOpen();const row=this.view()[this.position];assertData(row,'Either BOF or EOF is True',3021);return row;}
   get Status(){return statusOf(this._family.batch.get(this.cursorRow()));}
   get Bookmark(){return this._bookmarks.get(this.cursorRow());}
-  set Bookmark(value){this.ensurePropertyEdit();this.requireOpen();value=Number(value);assertData(Number.isSafeInteger(value),'Invalid bookmark',3001);this.Update();const index=this.view().findIndex(row=>this._bookmarks.get(row)===value);assertData(index>=0,'Bookmark is not valid in the current view',3001);this.moveTo(index);}
+  set Bookmark(value){this.ensurePropertyEdit();this.requireOpen();this.bookmarkPosition(value);this.Update();this.moveTo(this.bookmarkPosition(value));}
   get Filter(){return Array.isArray(this._filter)?this._filter.slice():this._filter;}
   set Filter(value){
     this.ensurePropertyEdit();this.requireOpen();let predicate=null;
     if(value===0)value='';
     if(typeof value==='string')predicate=this.compileFilter(value);
     else if(typeof value==='number')assertData([1,2,3,5].includes(value),'Unknown filter group',3001);
-    else{value=dataList(value).map(Number);assertData(value.every(n=>Number.isSafeInteger(n)&&this.rows.some(r=>this._bookmarks.get(r)===n)),'Invalid bookmark filter',3001);}
+    else{value=dataList(value);const bookmarks=new Set(this.rows.map(row=>this._bookmarks.get(row)));assertData(value.length<=100000&&value.every(n=>typeof n==='number'&&Number.isSafeInteger(n)&&bookmarks.has(n)),'Invalid bookmark filter',3001);value=value.slice();}
     if(value===1||value===5)assertData(this.LockType===4,'Batch filters require batch optimistic locking',3251);
-    this.Update();this._filter=value;this._predicate=predicate;this._deletedCurrent=null;this._cache=null;this.position=0;this.notify('filter');
+    this.Update();this._filter=value;this._bookmarkFilter=Array.isArray(value)?new Set(value):null;this._predicate=predicate;this._deletedCurrent=null;this._cache=null;this.position=0;this.notify('filter');
   }
   get PageSize(){return this._pageSize;}
   set PageSize(value){value=Number(value);assertData(Number.isSafeInteger(value)&&value>0&&value<=100000,'Invalid PageSize',5);this._pageSize=value;}
@@ -102,10 +126,11 @@ export class ConnectedRecordset extends ProviderRecordset {
     this.requireOpen();flags=Number(flags);let supported=0x100|0x200|0x2000|0x4000|0x80000;
     if(this.LockType!==1)supported|=0x1000400|0x1000800|0x1008000|0x10000;
     if(this._resync&&this.ActiveConnection)supported|=0x20000;
-    return Number.isSafeInteger(flags)&&flags!==0&&(flags&supported)===flags?-1:0;
+    return Number.isSafeInteger(flags)&&flags>0&&flags<=0x7fffffff&&(flags&supported)===flags?-1:0;
   }
   notify(kind){
     if(this._family){
+      if(['move','open','update','cancel','delete','cancelbatch','resync','filter','sort'].includes(kind))this._family.chunk=null;
       if(this._pending)this._family.pending=this;else if(this._family.pending===this)this._family.pending=null;
       if(!['open','close','move','filter','sort'].includes(kind))for(const other of this._family.members)if(other!==this&&other.State){
         const row=other._cache?.[other.position];other._cache=null;
@@ -196,7 +221,8 @@ export class ConnectedRecordset extends ProviderRecordset {
     rs.rows=this.rows;rs.columns=this.columns;rs._bookmarks=this._bookmarks;rs._nextBookmark=this._family.nextBookmark;
     rs._state=1;rs._lock=lock===1?1:this.LockType;rs._sort=this._sort;rs._sortSpecs=this._sortSpecs.slice();
     rs._writer=this._writer;rs._resync=this._resync;rs.Source=this.Source;rs._options=this._options;rs._parameters=this._parameters;rs._requestOptions=structuredClone(this._requestOptions||{});
-    rs._activeConnection=this.ActiveConnection;rs._boundConnection=this._boundConnection;rs.ActiveConnection?.recordsets.add(rs);
+    rs._activeConnection=this.ActiveConnection;rs._boundConnection=this._boundConnection;rs._boundAdapter=this._boundAdapter;rs.ActiveConnection?.recordsets.add(rs);
+    if(rs._boundConnection)(rs._boundConnection._clientCursors??=new Set()).add(rs);
     rs._pageSize=this.PageSize;return rs;
   }
   async Resync(affect=3,values=2){
@@ -211,14 +237,14 @@ export class ConnectedRecordset extends ProviderRecordset {
     if(this._updatePromise)await this._updatePromise;
     this.guard();this.requireOpen();assertData(this.LockType===4||!this._pending,'Update or CancelUpdate before closing an edited recordset',3219);
     if(this.LockType===4)this.CancelBatch();
-    const owned=this._ownedConnection,cn=this.ActiveConnection;
+    const owned=this._ownedConnection,cn=this._boundConnection||this.ActiveConnection,adapter=this._boundAdapter;
     this._ownedConnection=false;this.dispose();
-    if(owned&&cn&&!cn.recordsets.size)await cn.Close();
+    if(owned&&cn){const survivor=[...(cn._clientCursors||cn.recordsets)].find(rs=>rs.State&&rs._boundAdapter===adapter);if(survivor)survivor._ownedConnection=true;else if(cn.adapter===adapter)await cn.Close();}
   }
   dispose(){
     // Closing one clone must not leave a shared, uncommitted edit visible in the others.
-    if(this._pending){if(this._pending.isNew){const i=this.rows.indexOf(this._pending.row);if(i>=0)this.rows.splice(i,1);}else Object.assign(this._pending.row,copyRow(this._pending.before));this._pending=null;}
+    if(this._pending){const pending=this._pending;if(pending.isNew){const i=this.rows.indexOf(this._pending.row);if(i>=0)this.rows.splice(i,1);}else Object.assign(this._pending.row,copyRow(this._pending.before));this._pending=null;this._cache=null;this.notify('cancel');}
     if(this._family?.pending===this)this._family.pending=null;
-    this._family?.members.delete(this);super.dispose();
+    this._family?.members.delete(this);this._boundConnection?._clientCursors?.delete(this);this._ownedConnection=false;super.dispose();
   }
 }

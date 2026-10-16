@@ -8,13 +8,18 @@ from __future__ import annotations
 import argparse, functools, http.server, json, os, shutil, threading, time, traceback
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from coding_agent_workflows import workflow_cases
 ROOT = Path(__file__).resolve().parents[1]
 REPORTS = ROOT / 'reports/coding-agents'
 REPORTS.mkdir(parents=True, exist_ok=True)
 parser = argparse.ArgumentParser()
 parser.add_argument('--opaque', action='store_true')
-parser.add_argument('--browser', choices=['chromium','firefox','webkit'], default='chromium')
+parser.add_argument('--browser', choices=['chromium','firefox','webkit'], default=os.environ.get('VB6_BROWSER', 'chromium'))
+parser.add_argument('--mode', choices=['http', 'standalone-http', 'file'])
+parser.add_argument('--case', action='append', default=[], help='Run selected cases locally; forbidden in CI.')
 args = parser.parse_args()
+if args.opaque and args.mode: parser.error('Choose opaque fallback or a real origin, not both.')
+if os.environ.get('CI') and (args.opaque or args.case): parser.error('CI requires all cases on real origins; no opaque fallback or case filtering.')
 REPORTS = REPORTS / args.browser
 REPORTS.mkdir(parents=True, exist_ok=True)
 results = []
@@ -59,15 +64,21 @@ def sse(provider, data):
 
 def open_page(browser, mode):
     context = browser.new_context(viewport={'width':1440,'height':1000}, accept_downloads=True)
-    page = context.new_page(); page.set_default_timeout(12000)
-    page._errors = []; page.on('pageerror', lambda error: page._errors.append(str(error)))
-    if mode == 'opaque': page.set_content((ROOT/'dist/VB6-Studio-Web.html').read_text(), wait_until='domcontentloaded')
-    elif mode == 'file': page.goto((ROOT/'dist/VB6-Studio-Web.html').as_uri())
-    elif mode == 'standalone-http': page.goto(base+'/VB6-Studio-Web.html')
-    else: page.goto(base+'/index.html')
-    page.wait_for_function('!!globalThis.vb6Studio?.codingAgents')
-    page.evaluate("vb6Studio.loadProject(VB6StudioAPI.newProject('AgentE2E')); vb6Studio.command('codingAgents'); true")
-    return context,page
+    try:
+        page = context.new_page(); page.set_default_timeout(12000)
+        page._errors = []; page.on('pageerror', lambda error: page._errors.append(str(error)))
+        if mode == 'opaque': page.set_content((ROOT/'dist/VB6-Studio-Web.html').read_text(), wait_until='domcontentloaded')
+        elif mode == 'file': page.goto((ROOT/'dist/VB6-Studio-Web.html').as_uri())
+        elif mode == 'standalone-http': page.goto(base+'/VB6-Studio-Web.html')
+        else: page.goto(base+'/index.html')
+        page.wait_for_function('!!globalThis.vb6Studio?.codingAgents')
+        page.evaluate("vb6Studio.loadProject(VB6StudioAPI.newProject('AgentE2E')); vb6Studio.command('codingAgents'); true")
+        return context,page
+    except BaseException:
+        # Initialization may fail before case() receives ownership. Do not leak
+        # an entire renderer/context into subsequent cases or hide the failure.
+        context.close()
+        raise
 
 
 def tab(page, name): page.locator('.agent-panel').get_by_role('tab', name=name, exact=True).click()
@@ -198,9 +209,12 @@ def stopped(page,mode):
 
 
 def lifecycle(page,mode):
-    check(page.evaluate('vb6Studio.codingAgents.adapter.tools.length')==125)
+    # The untouched main artifact has 125 original IDE tools plus seven UI tools.
+    names=page.evaluate('vb6Studio.codingAgents.adapter.tools.map(t=>t.name)')
+    check(len(names)==132 and len(set(names))==132)
+    check(sorted(name for name in names if name.startswith('vb6.ui.'))==['vb6.ui.catalog','vb6.ui.close','vb6.ui.list','vb6.ui.present','vb6.ui.read','vb6.ui.resolveReference','vb6.ui.update'])
     check(page.evaluate("vb6Studio.menu('Tools').some(item=>item?.id==='codingAgents')"))
-    tab(page,'Tools');check(page.get_by_label('Coding agent tools',exact=True).locator('option').count()==127)
+    tab(page,'Tools');check(page.get_by_label('Coding agent tools',exact=True).locator('option').count()==134)
     # Native MDI sizing/chrome, not a new app shell or third-party chat component.
     check(page.locator('.agent-panel').evaluate("e=>getComputedStyle(e).backgroundColor")==page.locator('.ide-menubar').evaluate("e=>getComputedStyle(e).backgroundColor") if page.locator('.ide-menubar').count() else True)
     configure(page)
@@ -215,7 +229,7 @@ def lifecycle(page,mode):
     page.set_viewport_size({'width':600,'height':820})
     tab(page,'Connection');page.screenshot(path=str(REPORTS/f'{mode}-compact.png'))
     check(page.locator('.agent-panel').is_visible())
-    return {'catalog':125,'loadCancelsConsent':True,'classicMDI':True}
+    return {'catalog':132,'loadCancelsConsent':True,'classicMDI':True}
 
 
 def plan_question(page, mode, provider):
@@ -581,7 +595,7 @@ def permission_full(page,mode):
     check('FULL IDE ACCESS' in dialog.inner_text());dialog.get_by_label('Confirm Full IDE access for this run',exact=True).check()
     dialog.get_by_role('button',name='Start Task',exact=True).click();finish(page)
     check(len(requests)==2);check(page.evaluate('vb6Studio.project.modules[0].code.startsWith("\' full-access edit")'))
-    check(page.evaluate("!vb6Studio.codingAgents.agent.transcript.some(e=>e.type==='approval')"))
+    check(page.evaluate("vb6Studio.codingAgents.agent.transcript.some(e=>e.type==='approval')") is False)
     check('Inactive' in page.get_by_label('Effective agent permissions',exact=True).inner_text())
     check(page.evaluate("vb6Studio.codingAgents.agent.transcript.some(e=>e.type==='permission'&&e.permission?.action==='allow')"))
     page.screenshot(path=str(REPORTS/f'{mode}-full-permissions.png'))
@@ -1139,6 +1153,7 @@ def review_scroll_retention(page,mode):
 
 
 def case(browser,mode,name,fn):
+    if args.case and name not in args.case: return
     context=None;started=time.perf_counter()
     try:
         context,page=open_page(browser,mode);details=fn(page,mode);check(not page._errors,'Browser errors: '+str(page._errors))
@@ -1156,7 +1171,7 @@ try:
         engine=getattr(p,args.browser)
         options={'executable_path':os.environ.get('CHROMIUM_PATH') or shutil.which('chromium') or engine.executable_path,'args':['--no-sandbox']} if args.browser=='chromium' else {}
         browser=engine.launch(**options)
-        for mode in (['opaque'] if args.opaque else ['http','standalone-http','file']):
+        for mode in (['opaque'] if args.opaque else [args.mode] if args.mode else ['http','standalone-http','file']):
             for provider in ['openai','anthropic','google']:
                 case(browser,mode,provider,lambda page,mode,provider=provider:provider_workflow(page,mode,provider))
                 case(browser,mode,provider+'-plan-question',lambda page,mode,provider=provider:plan_question(page,mode,provider))
@@ -1164,8 +1179,9 @@ try:
                 case(browser,mode,provider+'-output-recovery',lambda page,mode,provider=provider:output_recovery(page,mode,provider))
                 case(browser,mode,provider+'-queued-followups',lambda page,mode,provider=provider:queued_followups(page,mode,provider))
             for name,fn in [('review-scroll-retention',review_scroll_retention),('review-selective-restore',review_selective_restore),('review-selective-stale',review_selective_stale),('review-target-retention',review_target_retention),('review-freshness',review_freshness_without_recapture),('review-task-preferences',review_task_preferences),('queue-selection-retention',queue_selection_retention),('queued-command-isolation',queued_command_isolation),('queue-while-running',queue_while_running),('queue-permission-confirmation',queue_permission_confirmation),('queue-task-lifecycle',queue_task_lifecycle),('review-restore',review_restore),('review-stale-reload',review_stale_and_reload),('review-feedback',review_feedback),('review-last-run',review_last_run),('hosted-preview',hosted_preview),('hosted-preview-stale',hosted_preview_stale),('hosted-preview-failure',hosted_preview_failure),('automatic-retry',automatic_retry),('stop-backoff',stop_backoff),('compact-command',lambda page,mode:context_compaction(page,mode,'openai',True)),('denied',denied),('readonly',readonly),('scoped',scoped),('stopped',stopped),('lifecycle',lifecycle),('tasks',task_switching),('limited-resume',limited_resume),('request-retry',request_retry),('question-cancel',question_cancel),('live-thread',live_thread),('thread-reading',thread_reading),('thread-formatting',thread_formatting),('budget-preferences',budget_preferences),('composer-keyboard',composer_keyboard),('thread-catch-up',thread_catch_up),('thread-return',thread_return),('thread-pruning-anchor',thread_pruning_anchor),('batch-recovery',batch_recovery),('permission-full',permission_full),('permission-autoedit',permission_autoedit),('permission-deny',permission_rule_denial),('permission-never',permission_never_ask),('permission-approve-run',permission_approve_run),('permission-tasks',permission_task_profiles),('permission-revoke',permission_revoke),('permission-plan',permission_plan)]:case(browser,mode,name,fn)
+            for name,fn in workflow_cases(globals()).items(): case(browser,mode,name,fn)
         browser.close()
 finally:
     server.shutdown();server.server_close()
-    (REPORTS/('opaque-results.json' if args.opaque else 'results.json')).write_text(json.dumps({'browser':args.browser,'opaqueFallback':args.opaque,'paidProviderRequests':0,'tests':results},indent=2))
+    (REPORTS/('opaque-results.json' if args.opaque else (args.mode+'-results.json') if args.mode else 'results.json')).write_text(json.dumps({'browser':args.browser,'opaqueFallback':args.opaque,'paidProviderRequests':0,'mode':args.mode,'caseSelection':args.case,'tests':results},indent=2))
 raise SystemExit(0 if results and all(item['passed'] for item in results) else 1)

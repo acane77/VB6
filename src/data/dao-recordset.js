@@ -1,5 +1,5 @@
-import {dataDefault} from './defaults.js';
-import {assertData,after,dataList,sameValue} from './common.js';
+import {dataDefault,dataObject} from './defaults.js';
+import {assertData,after,dataList,sameValue,DATA_LIMITS} from './common.js';
 import {fieldValue,fieldScalarType} from './recordset.js';
 import {compileCriteria,compareData} from './criteria.js';
 import {DAO_TYPES} from './sql-parameters.js';
@@ -12,7 +12,7 @@ const bracket=n=>'['+String(n).replace(/]/g,']]')+']';
 /** DAO has an explicit copy buffer: field assignments do not auto-enter Edit, and navigation discards edits. */
 export class DAORecordset {
   constructor(cursor,database,type=2,source='',tableDef=null){
-    this.__type='DAO.Recordset';this.cursor=cursor;this.database=database;this.Type=type;this.Name=String(source);this._tableDef=tableDef;
+    dataObject(this);this.__type='DAO.Recordset';this.cursor=cursor;this.database=database;this.Type=type;this.Name=String(source);this._tableDef=tableDef;
     this._mode=0;this._buffer=null;this._original=null;this._row=null;this._busy=false;this._deleted=false;this._lastModified=null;this._index='';this._noMatch=false;this._filter='';this._sort='';
     this.Fields={get Count(){return cursor.Fields.Count;},Item:key=>this.field(key),setItem:(key,value)=>{this.field(key).Value=value;},[Symbol.iterator]:()=>cursor.columns.map(c=>this.field(c.Name))[Symbol.iterator]()};
     database?.Recordsets.items.push(this);
@@ -39,7 +39,7 @@ export class DAORecordset {
       get OriginalValue(){rs.require();return copy(rs._original?.[c.Name]??(rs._mode===2?null:rs.cursor.current()[c.Name]));},
       get FieldSize(){const value=field.Value;return value==null?0:typeof value==='string'?value.length*2:value.length??(field.Type===3?2:field.Type===2?1:4);},
       GetChunk(offset,length){offset=Number(offset);length=Number(length);assertData(Number.isSafeInteger(offset)&&offset>=0&&Number.isSafeInteger(length)&&length>=0,'Invalid chunk range',5);const value=field.Value;if(value==null)return null;assertData(typeof value==='string'||value instanceof Uint8Array,'Chunk requires text or binary',3251);return value.slice(offset,offset+length);},
-      AppendChunk(value){const old=field.Value;assertData(old==null||typeof old===typeof value,'Chunk type mismatch',13);if(typeof value==='string')field.Value=(old||'')+value;else{assertData(value instanceof Uint8Array&&(old==null||old instanceof Uint8Array),'Binary chunk requires bytes',13);const result=new Uint8Array((old?.length||0)+value.length);if(old)result.set(old);result.set(value,old?.length||0);field.Value=result;}}
+      AppendChunk(value){if(typeof value!=='string')value=fieldValue({Type:205},value);const old=field.Value;assertData((old?.length||0)+value.length<=DATA_LIMITS.bytes/(typeof value==='string'?2:1),'Chunk allocation limit exceeded',7);assertData(old==null||typeof old===typeof value,'Chunk type mismatch',13);if(typeof value==='string')field.Value=(old||'')+value;else{assertData(value instanceof Uint8Array&&(old==null||old instanceof Uint8Array),'Binary chunk requires bytes',13);const result=new Uint8Array((old?.length||0)+value.length);if(old)result.set(old);result.set(value,old?.length||0);field.Value=result;}}
     };return dataDefault(field,()=>fieldScalarType(DAO_TYPES[field.Type]||c.Type));
   }
   Edit(){this.require();assertData(this.Updatable,'Recordset is read-only',3027);this.CancelUpdate();assertData(!this._deleted,'Record is deleted',3167);const row=this.cursor.current();this._row=row;this._buffer=rowCopy(row);this._original=rowCopy(row);this._mode=1;}

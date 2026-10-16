@@ -8,8 +8,10 @@ import {GRAPHICS_LIMITS,graphicsColor,triangleCompatible} from './contract.js';
 const surfaces = new WeakMap();
 export function refreshGraphicsSurfaces(root) { for (const canvas of root.querySelectorAll('canvas.graphics-surface')) surfaces.get(canvas)?.transferDocument(); }
 const sharedDevices = new WeakMap();
+export const GRAPHICS_GPU_DEVICE_TIMEOUT=15000;
 export function oleColor(color,fallback='#c0c0c0',theme='classic'){return colorValue(color,fallback,theme);}
-export async function getGPUDevice(view=globalThis) {
+export async function getGPUDevice(view=globalThis,timeout=GRAPHICS_GPU_DEVICE_TIMEOUT) {
+  if(!Number.isFinite(timeout)||timeout<1||timeout>60000)throw new RangeError('Invalid graphics GPU timeout');
   if(view.vb6NativeGPUUnavailable)return null;
   if(view.vb6NativeGPUDevice)return view.vb6NativeGPUDevice;
   const gpu=view.navigator?.gpu;if(!gpu)return null;
@@ -27,9 +29,9 @@ export async function getGPUDevice(view=globalThis) {
     sharedDevices.set(view,pending);
     pending.then(device=>{if(!device&&sharedDevices.get(view)===pending)sharedDevices.delete(view);});
   }
-  let timeout;
-  try{return await Promise.race([pending,new Promise(resolve=>timeout=setTimeout(()=>resolve(null),3000))]);}
-  finally{clearTimeout(timeout);}
+  let timer;
+  try{return await Promise.race([pending,new Promise(resolve=>timer=setTimeout(()=>resolve(null),timeout))]);}
+  finally{clearTimeout(timer);}
 }
 const SHADER=`struct Screen { size: vec2f, padding: vec2f };
 @group(0) @binding(0) var<uniform> screen: Screen;

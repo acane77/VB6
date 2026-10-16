@@ -1,3 +1,4 @@
+import {sqliteSchema} from './schema.js';
 import {initializeSQLite} from './vendor/sqlite.js';
 import {assertData,dataError,DATA_LIMITS,quoteIdentifier,sqlValue,columnType} from './common.js';
 
@@ -47,7 +48,7 @@ export class SQLiteProvider {
       }
       const columns=names.map((Name,c)=>{const types=new Set(values.map(r=>r[c]).filter(v=>v!=null).map(columnType));return {Name,Type:types.size===1?[...types][0]:[...types].every(t=>[3,5].includes(t))&&types.size?5:12,DefinedSize:0};});
       const after=db.exec('SELECT total_changes() AS n')[0].values[0][0];
-      const changed=after!==before||!/^\s*(SELECT|EXPLAIN)\b/i.test(sql);
+      const changed=after!==before||!/^(SELECT|EXPLAIN|PRAGMA)\b/i.test(head);
       const rowsAffected=after!==before?db.getRowsModified():0;
       statement.free();statement=null;
       if(changed&&!this.config.readOnly){this.entry.dirty=true;if(!this.level)this.flush();}
@@ -75,14 +76,7 @@ export class SQLiteProvider {
     this.requireAccess();assertData(this.level,'No active transaction',3246);
     this.entry.db.run('ROLLBACK');this.level=0;this.entry.owner=null;this.entry.dirty=false;
   }
-  schema(kind=20){
-    assertData([20,4].includes(Number(kind)),'Only table and column schema rows are implemented',3251);
-    const tables=this.execute("SELECT name AS TABLE_NAME, type AS TABLE_TYPE FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name");
-    if(Number(kind)===20)return tables;
-    const values=[];
-    for(const [name]of tables.values)for(const row of this.execute('PRAGMA table_info('+quoteIdentifier(name)+')').values)values.push([name,row[1],row[2],row[3]?0:-1,row[5]]);
-    return {columns:['TABLE_NAME','COLUMN_NAME','DATA_TYPE','IS_NULLABLE','PRIMARY_KEY'].map(Name=>({Name,Type:12})),values,rowsAffected:0};
-  }
+  schema(kind=20){return sqliteSchema(this,Number(kind));}
   table(name){
     this.requireAccess();return this.projectTable({table:name,columns:null},this.execute('SELECT * FROM '+quoteIdentifier(name)));
   }
@@ -122,8 +116,10 @@ export class SQLiteProvider {
     const savepoint='vb6_'+(this.level-1);this.entry.db.run('ROLLBACK TO SAVEPOINT '+savepoint);this.entry.db.run('RELEASE SAVEPOINT '+savepoint);this.level--;
   }
   close(){
-    if(!this.entry)return;if(this.level)this.rollback();this.flush();
-    const entry=this.entry;entry.users.delete(this);this.entry=null;
-    if(!entry.users.size){entry.db.close();this.context.databases.delete(this.path);}
+    if(!this.entry)return;
+    const entry=this.entry;
+    // Persistence/host callback failures must not strand the shared WASM handle.
+    try{if(this.level)this.rollback();this.flush();}
+    finally{entry.users.delete(this);this.entry=null;if(!entry.users.size){try{entry.db.close();}finally{this.context.databases.delete(this.path);}}}
   }
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getGPUDevice } from '../src/graphics/surface.js';
+import { GRAPHICS_GPU_DEVICE_TIMEOUT, getGPUDevice } from '../src/graphics/surface.js';
 
 function windowGPU() {
   let requests = 0, lose;
@@ -30,4 +30,13 @@ test('missing WebGPU and adapter failures resolve as explicit unavailability', a
   assert.equal(await getGPUDevice({}),null);
   assert.equal(await getGPUDevice({navigator:{gpu:{requestAdapter:async()=>null}}}),null);
   assert.equal(await getGPUDevice({navigator:{gpu:{requestAdapter:async()=>{throw new Error('no GPU');}}}}),null);
+});
+
+test('cold software devices receive the bounded qualification budget', async () => {
+  assert.equal(GRAPHICS_GPU_DEVICE_TIMEOUT,15000);
+  let resolveAdapter;
+  const device={lost:new Promise(()=>{})},view={navigator:{gpu:{requestAdapter:()=>new Promise(resolve=>{resolveAdapter=resolve;})}}};
+  const pending=getGPUDevice(view,100);setTimeout(()=>resolveAdapter({requestDevice:async()=>device}),5);
+  assert.equal(await pending,device);
+  await assert.rejects(()=>getGPUDevice({},0),/timeout/);
 });

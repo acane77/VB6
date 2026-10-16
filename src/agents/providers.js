@@ -1,3 +1,5 @@
+import {collectModelCatalog} from './model-catalog.js';
+import {validatePacketShape, hasLateContent, validateCompletedContent, validateToolCalls} from './provider-validation.js';
 import {richUserMessage} from './content.js';
 import {validateChatGPTEvent} from './chatgpt-protocol.js';
 import {normalizeAgentLimits} from './limits.js';
@@ -159,19 +161,8 @@ export function createTransport({provider, apiKey = '', relay = '', relayToken =
   Object.defineProperty(transport, 'capabilities', {value: Object.freeze({outputTokenLimit: authMode !== 'chatgpt'})});
   return transport;
 }
-export async function listModels(transport, provider, signal, {details = false} = {}) {
-  const ids = new Set(); let cursor = '';
-  for (let page = 0; page < 20; page++) {
-    let result; await transport(null, {models: true, cursor, signal, receive: data => { result = data; }});
-    if (result?.chatgpt === true) return details ? result.data : result.data.map(item => item.id);
-    for (const item of result?.data || result?.models || []) {
-      if (provider === 'google' && !item.supportedGenerationMethods?.includes('generateContent')) continue;
-      const id = item.id || item.name?.replace(/^models\//, ''); if (id) ids.add(id);
-    }
-    const next = provider === 'google' ? result?.nextPageToken : result?.has_more ? result.last_id : '';
-    if (!next || next === cursor) break; cursor = next;
-  }
-  return details ? [...ids].sort().map(id => ({id, label: id})) : [...ids].sort();
+export async function listModels(transport, provider, signal, options = {}) {
+  providerInfo(provider); return collectModelCatalog(transport, provider, signal, options);
 }
 export function toolCatalog(tools) {
   const names = new Map();
@@ -192,10 +183,16 @@ export function requestBody(provider, model, history, definitions, instructions,
 export function userMessage(provider, text, content = []) { return richUserMessage(provider, text, content); }
 /** Preserve provider-native reasoning/signature blocks for tool continuations; display only public text. */
 export function responseCollector(provider, onText = () => {}) {
-  let raw, finished = false, stop = '', usage = {}, googleParts = [], publicCharacters = 0;
+  providerInfo(provider);
+  let raw, finished = false, stop = '', usage = {}, googleParts = [], publicCharacters = 0, failure = null;
   const publicText = text => { if (typeof text === 'string' && text) { publicCharacters += text.length; onText(text); } };
-  const blocks = [], argumentsByIndex = new Map();
+  const blocks = [], argumentsByIndex = new Map(), closedBlocks = new Set();
   function receive(data) {
+    if (failure) throw failure;
+    try { receivePacket(data); } catch (error) { failure = error; throw error; }
+  }
+  function receivePacket(data) {
+    validatePacketShape(provider, data);
     // Capture billable usage even when the provider ends with an incomplete/failed turn.
     if (data.response?.usage) usage = data.response.usage;
     if (data.usage) usage = {...usage, ...data.usage};
@@ -208,9 +205,10 @@ export function responseCollector(provider, onText = () => {}) {
     }
     if (['response.failed', 'response.incomplete'].includes(data.type) && (!data.response || typeof data.response !== 'object')) throw new Error('Malformed provider failure event. No partial tools were executed.');
     if (data.error || response.error || data.type === 'error' || data.type === 'response.failed' || data.type === 'response.incomplete' || response.status === 'failed') throw providerFailure(data);
+    if (finished && hasLateContent(provider, data)) throw new Error('Provider sent content after completion. No partial tools were executed.');
     if (provider === 'openai') {
       if (data.type === 'response.output_text.delta') publicText(data.delta || '');
-      if (data.type === 'response.completed' || Array.isArray(data.output)) { raw = data.response || data; finished = raw.status === 'completed'; usage = raw.usage || {}; }
+      if (data.type === 'response.completed' || Array.isArray(data.output)) { raw = structuredClone(data.response || data); finished = raw.status === 'completed'; usage = raw.usage || {}; }
     } else if (provider === 'anthropic') {
       if (data.type === 'message_start') usage = {...data.message?.usage};
       if (data.type === 'content_block_start') {
@@ -222,17 +220,23 @@ export function responseCollector(provider, onText = () => {}) {
       if (data.type === 'content_block_delta') {
         if (!Number.isSafeInteger(data.index) || data.index < 0 || data.index >= blocks.length) throw new Error('Invalid provider stream block index.');
         const block = blocks[data.index], delta = data.delta;
-        if (!block || !delta) throw new Error('Invalid provider stream order.');
+        if (!block || !delta || closedBlocks.has(data.index)) throw new Error('Invalid provider stream order.');
         const expected = {text_delta: 'text', input_json_delta: 'tool_use', thinking_delta: 'thinking', signature_delta: 'thinking'}[delta.type];
         if (expected && block.type !== expected) throw new Error('Invalid provider stream block type.');
+        const field = {text_delta: 'text', input_json_delta: 'partial_json', thinking_delta: 'thinking', signature_delta: 'signature'}[delta.type];
+        if (field && typeof delta[field] !== 'string') throw new Error('Invalid provider stream delta shape.');
         if (delta.type === 'text_delta') { block.text = (block.text || '') + delta.text; publicText(delta.text); }
         if (delta.type === 'input_json_delta') argumentsByIndex.set(data.index, (argumentsByIndex.get(data.index) || '') + delta.partial_json);
         if (delta.type === 'thinking_delta') block.thinking = (block.thinking || '') + delta.thinking;
         if (delta.type === 'signature_delta') block.signature = (block.signature || '') + delta.signature;
       }
+      if (data.type === 'content_block_stop') {
+        if (!Number.isSafeInteger(data.index) || data.index < 0 || data.index >= blocks.length || closedBlocks.has(data.index)) throw new Error('Invalid provider stream block stop.');
+        closedBlocks.add(data.index);
+      }
       if (data.type === 'message_delta') { stop = data.delta?.stop_reason || stop; usage = {...usage, ...data.usage}; }
       if (data.type === 'message_stop') finished = true;
-      if (Array.isArray(data.content)) { raw = data.content; usage = data.usage || {}; stop = data.stop_reason; finished = true; }
+      if (Array.isArray(data.content)) { raw = structuredClone(data.content); usage = data.usage || {}; stop = data.stop_reason; finished = true; }
     } else {
       const candidate = data.candidates?.[0];
       if (data.promptFeedback?.blockReason) throw new Error('The provider blocked this prompt.');
@@ -242,10 +246,11 @@ export function responseCollector(provider, onText = () => {}) {
     }
   }
   function result() {
+    if (failure) throw failure;
     if (!finished) throw new ProviderTransportError('Provider stream ended before completion. No partial tools were executed.', {retryable: true, kind: 'stream'});
     let message, calls, text;
     if (provider === 'openai') {
-      message = raw.output;
+      message = raw.output; validateCompletedContent(provider, message);
       calls = message.filter(item => item.type === 'function_call').map(item => ({id: item.call_id, name: item.name, arguments: parseProviderJSON(item.arguments)}));
       text = message.filter(item => item.type === 'message').flatMap(item => item.content || []).filter(item => ['output_text', 'refusal'].includes(item.type)).map(item => item.text || item.refusal || '').join('');
     } else if (provider === 'anthropic') {
@@ -255,18 +260,17 @@ export function responseCollector(provider, onText = () => {}) {
       }
       if (!['end_turn', 'tool_use', 'stop_sequence'].includes(stop)) throw new Error('Provider turn did not finish normally. Start a new task.');
       if (!raw) { raw = blocks; for (const [index, json] of argumentsByIndex) raw[index].input = parseProviderJSON(json); }
-      message = {role: 'assistant', content: raw};
+      message = {role: 'assistant', content: raw}; validateCompletedContent(provider, message);
       calls = raw.filter(item => item.type === 'tool_use').map(item => ({id: item.id, name: item.name, arguments: item.input}));
       text = raw.filter(item => item.type === 'text').map(item => item.text).join('');
     } else {
       if (stop === 'MAX_TOKENS') throw new ProviderOutputLimitError();
       if (stop !== 'STOP') throw new Error('Provider turn did not finish normally. No partial tools were executed.');
-      message = {role: 'model', parts: googleParts};
-      calls = googleParts.filter(item => item.functionCall).map((item, index) => ({id: item.functionCall.id || 'call_' + index, nativeId: item.functionCall.id, name: item.functionCall.name, arguments: item.functionCall.args || {}}));
+      message = {role: 'model', parts: googleParts}; validateCompletedContent(provider, message);
+      calls = googleParts.filter(item => item.functionCall).map((item, index) => ({id: item.functionCall.id ?? 'call_' + index, nativeId: item.functionCall.id, name: item.functionCall.name, arguments: item.functionCall.args ?? {}}));
       text = googleParts.filter(item => item.text && !item.thought).map(item => item.text).join('');
     }
-    const seen = new Set();
-    for (const call of calls) { if (!call.id || !call.name || seen.has(call.id) || !call.arguments || typeof call.arguments !== 'object' || Array.isArray(call.arguments)) throw new Error('Invalid or duplicate provider tool call.'); seen.add(call.id); }
+    validateToolCalls(provider, calls, message, stop);
     return {message, calls, text, ...usageSummary()};
   }
   function usageSummary() {

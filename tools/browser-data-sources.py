@@ -105,6 +105,21 @@ try:
             check('not-a-real-token' not in p.evaluate('JSON.stringify(vb6Studio.project)'));p.get_by_role('button',name='OK',exact=True).last.click();p.get_by_role('button',name='Cancel',exact=True).last.click()
             root.get_by_role('treeitem',name='UITest',exact=True).click();root.get_by_role('button',name='Properties',exact=True).click();p.screenshot(path=str(OUT/'data-link-properties.png'));p.get_by_role('button',name='Cancel',exact=True).last.click();healthy(p);p.close()
         case('Classic Data Environment: add connection, SQL preview, command properties, credential rejection and Cancel',designer)
+        def client_contracts():
+            p=page_for(browser,'sqlite-customers');ready(p,2)
+            code=(ROOT/'tests/fixtures/data-client-completeness.bas').read_text()
+            result=p.evaluate("""async(code)=>{
+                const api=VB6Runtime.RuntimeAPI;
+                const project={schema:1,name:'DataClientAcceptance',startup:'Sub Main',forms:[],modules:[{name:'MainModule',kind:'module',code}]};
+                const compiled=api.compileProject(project);
+                if(compiled.diagnostics.length)throw Error(JSON.stringify(compiled.diagnostics));
+                const output=[],vm=new api.VirtualMachine(compiled,{print:s=>output.push(s)});
+                try{await vm.start();return output;}finally{await vm.data.close();}
+            }""",code)
+            check(result==['Grace','1 203','id','True','2','ab cd','Byte() 7 255','7','1'],str(result))
+            check(not p.requests,'Offline client fixture requested a network resource: '+str(p.requests))
+            healthy(p);p.close()
+        case('Bundled VB data clients: Command source, restricted schema, grouped filters, bookmarks and independent Byte arrays',client_contracts)
         browser.close()
 finally:
     server.terminate()

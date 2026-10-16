@@ -5,10 +5,11 @@ Required GPU backends may never pass via fallback. --offline uses inline local
 bundles for restricted environments, but does not relax backend requirements.
 Software-driver CI is functional qualification, not a physical-GPU claim.
 """
-import argparse, functools, http.server, io, json, math, os, shlex, shutil, subprocess, threading, traceback
+import argparse, functools, http.server, io, json, math, os, shutil, subprocess, threading, traceback
 from pathlib import Path
 from PIL import Image, ImageChops
 from playwright.sync_api import sync_playwright
+from rendering_launch import rendering_launch_flags
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'reports/rendering/agent-thread'
@@ -36,11 +37,7 @@ if not args.offline:
         def log_message(self, *args): pass
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Quiet, directory=ROOT))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-flags = ['--no-sandbox']
-if args.software_gpu:
-    flags += ['--enable-unsafe-webgpu', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--use-vulkan=swiftshader',
-              '--disable-partial-raster', '--run-all-compositor-stages-before-draw']
-flags += shlex.split(os.environ.get('RENDERING_BROWSER_FLAGS', ''))
+flags = rendering_launch_flags(software_gpu=args.software_gpu)
 results = []
 
 def check(value, message):

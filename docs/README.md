@@ -30,8 +30,8 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [Testing](TESTING.md): setup, reproducible checks and validation boundaries.
 - [Build tools](../tools/README.md) and [test scope](../tests/README.md): maintained
   entry points, fixtures and cleanup rules.
-- [Compatibility](COMPATIBILITY.md), [control compatibility](CONTROLS-COMPATIBILITY.md)
-  and [user guide](USER_GUIDE.md): supported behavior, deliberate limits and workflows to preserve.
+- [Compatibility](COMPATIBILITY.md) and [user guide](USER_GUIDE.md): supported
+  behavior, deliberate limits and workflows to preserve.
 
 ## Language, runtime and project files
 
@@ -56,6 +56,8 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [Native project interchange](NATIVE-PROJECTS.md) and
   [workspace, save recovery and interoperability](NATIVE-WORKSPACE-INTEROP.md).
 - [Data sources](DATA-SOURCES.md): providers, binding, credentials and deployment.
+- [Data client capabilities](DATA-CLIENT-CAPABILITIES.md): ADO/DAO/RDO cursor,
+  schema, ownership and binary-value contracts, with explicit native-provider limits.
 - [HTML5 WebBrowser](WEBBROWSER.md): classic navigation/events, isolated DOM automation,
   designer integration, HTML exports and native compatibility boundaries.
 - [Common Automation](COMMON-AUTOMATION.md): HTTP/XML/ADO stream objects, shared data
@@ -66,6 +68,7 @@ These guides describe the implemented system, not complete native VB6 parity.
 
 - [Form designer and SSTab editing](DESIGNER-SUPPORT.md): native tab imports,
   atomic property/collection editors, shared control capabilities and explicit boundaries.
+- [Browser control compatibility](CONTROLS-COMPATIBILITY.md): collection ordering, selection identity, keyboard behavior and explicit native-control boundaries.
 
 - [Optional Figma workspace](figma-workspace.md): real VB6 Assets/Layers/Design,
   reversible workspace profiles, canvas navigation, auto layout and anchoring.
@@ -90,6 +93,8 @@ These guides describe the implemented system, not complete native VB6 parity.
   live diagnostics, saved-policy retry and environment limitations.
 - [IDE themes](IDE-THEMES.md), [application themes](APPLICATION-THEMES.md) and
   [matching icon packs](THEME-ICON-PACKS.md).
+- [Theme lifecycle and environment](THEME-LIFECYCLE.md): bounded media-query
+  observation, theme mutation events and visual-viewport-aware popup placement.
 - [macOS 26 visual fidelity](MACOS-THEME-FIDELITY.md): component states, native references,
   authored-layout preservation and measured comparison boundaries.
 
@@ -106,7 +111,6 @@ These guides describe the implemented system, not complete native VB6 parity.
   [native compiler and optimizer](native-compiler-optimization.md),
   [direct Win32 AOT](WIN32-AOT.md) and [export troubleshooting](WIN32-EXPORT-TROUBLESHOOTING.md).
 - [Private native services](WIN32-PRIVATE-SERVICES.md): demand-driven linkage, pointer primitives and owned-frame performance.
-- [Native sequential file I/O](WIN32-SEQUENTIAL-IO.md): Input/Line Input/Write semantics, ownership, encoding and execution gates.
 - [Native strings and control metadata](NATIVE-STRING-METADATA.md): counted BSTRs,
   Replace/InStr binding, Tag/Name lifetime and HWND-backed TabStop.
 - [Win32 controls](WIN32-CONTROLS.md): native AOT control coverage, property and stream ownership, layout integration, output dependencies and Windows execution checks.
@@ -120,6 +124,7 @@ These guides describe the implemented system, not complete native VB6 parity.
 - [Native drawing surfaces](WIN32-SURFACES.md): Form/PictureBox hDC ownership, retained backing, painting, scaling and failure cleanup.
 - [Native RichEdit selection and search](WIN32-RICHEDIT.md): mixed-format masks, Unicode search, line lookup and undo/redo.
 - [Native grids, charts and tab pages](WIN32-GRIDS-CHARTS-TABS.md): storage, editing, GDI, ownership and execution gates.
+- [Native sequential file I/O](WIN32-SEQUENTIAL-IO.md): Open/Input/Output/Append, typed record parsing, handle ownership and Windows execution gates.
 - AOT language/ABI contracts: [numeric storage](WIN32-NUMERIC.md),
   [Currency](WIN32-CURRENCY.md), [Date](WIN32-DATES.md),
   [calendar intervals](WIN32-CALENDAR-INTERVALS.md), [arrays](WIN32-ARRAYS.md),
@@ -138,7 +143,8 @@ These guides describe the implemented system, not complete native VB6 parity.
 
 - [Coding-agent setup and APIs](coding-agents.md), [permissions](CODING-AGENT-PERMISSIONS.md),
   [conversation/session budgets](CODING-AGENT-THREADS.md),
-  [error recovery and compaction](CODING-AGENT-RECOVERY.md) and
+  [error recovery and compaction](CODING-AGENT-RECOVERY.md),
+  [task workflows](CODING-AGENT-WORKFLOWS.md) and
   [change review/workbench](CODING-AGENT-WORKBENCH.md).
 - [ChatGPT account setup](CHATGPT-LOGIN.md) and [sign-in troubleshooting](CHATGPT-SIGNIN-TROUBLESHOOTING.md).
 - [MCP server setup and security](MCP.md) and [agent tool reference](MCP-AGENTS.md).

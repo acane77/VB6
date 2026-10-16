@@ -6,10 +6,19 @@ const asBytes=input=>ArrayBuffer.isView(input)?new Uint8Array(input.buffer,input
 const table=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;table[n]=c>>>0;}
 export function crc32(bytes){let crc=0xffffffff;for(const b of bytes)crc=table[(crc^b)&255]^(crc>>>8);return (crc^0xffffffff)>>>0;}
 function unsafePath(path){return !path||/^[\\/]|^[A-Za-z]:|\0/.test(path)||path.split(/[\\/]/).includes('..');}
+function zipLimit(name,value){if(!Number.isSafeInteger(value)||value<0)throw new Error('Invalid ZIP limit: '+name);return value;}
+function registerZipPath(entries,parents,name,directory){
+  const key=name.toLowerCase(),parts=key.split('/');
+  for(let i=1;i<parts.length;i++){const parent=parts.slice(0,i).join('/');if(entries.get(parent)==='file')throw new Error('File/directory collision in ZIP: '+name);parents.add(parent);}
+  const kind=directory?'directory':'file',existing=entries.get(key);
+  if(existing){if(existing!==kind)throw new Error('File/directory collision in ZIP: '+name);throw new Error('Duplicate ZIP entry: '+name);}
+  if(kind==='file'&&parents.has(key))throw new Error('File/directory collision in ZIP: '+name);
+  entries.set(key,kind);
+}
 function concat(parts){const result=new Uint8Array(parts.reduce((s,p)=>s+p.length,0));let at=0;for(const p of parts){result.set(p,at);at+=p.length;}return result;}
 function header(size){const bytes=new Uint8Array(size);return {bytes,view:new DataView(bytes.buffer)};}
-export function writeZip(files,{reproducible=false}={}){if(Object.keys(files).length>=65535)throw new Error('Too many entries for classic ZIP output');const locals=[],centrals=[],names=new Set();let offset=0;const now=new Date(),dosTime=reproducible?0:(now.getHours()<<11)|(now.getMinutes()<<5)|(now.getSeconds()>>1),dosDate=reproducible?33:((Math.max(1980,now.getFullYear())-1980)<<9)|((now.getMonth()+1)<<5)|now.getDate();
-  for(const [path,input]of Object.entries(files)){if(unsafePath(path))throw new Error('Unsafe ZIP path');const key=path.replace(/\\/g,'/').split('/').filter(p=>p&&p!=='.').join('/').toLowerCase();if(names.has(key))throw new Error('Duplicate ZIP entry: '+path);names.add(key);const name=encoder.encode(path),data=typeof input==='string'?encoder.encode(input):asBytes(input),crc=crc32(data);if(decoder.decode(name)!==path)throw new Error('ZIP filename contains invalid Unicode');if(name.length>65535||data.length>=0xffffffff)throw new Error('ZIP entry exceeds classic format limits');const h=header(30),v=h.view;v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint16(6,0x800,true);v.setUint16(10,dosTime,true);v.setUint16(12,dosDate,true);v.setUint32(14,crc,true);v.setUint32(18,data.length,true);v.setUint32(22,data.length,true);v.setUint16(26,name.length,true);locals.push(h.bytes,name,data);
+export function writeZip(files,{reproducible=false}={}){if(Object.keys(files).length>=65535)throw new Error('Too many entries for classic ZIP output');const locals=[],centrals=[],entries=new Map(),parents=new Set();let offset=0;const now=new Date(),dosTime=reproducible?0:(now.getHours()<<11)|(now.getMinutes()<<5)|(now.getSeconds()>>1),dosDate=reproducible?33:((Math.max(1980,now.getFullYear())-1980)<<9)|((now.getMonth()+1)<<5)|now.getDate();
+  for(const [path,input]of Object.entries(files)){if(unsafePath(path))throw new Error('Unsafe ZIP path');const normalized=path.replace(/\\/g,'/').split('/').filter(p=>p&&p!=='.').join('/'),directory=/[\\/]$/.test(path);registerZipPath(entries,parents,normalized,directory);const name=encoder.encode(path),data=typeof input==='string'?encoder.encode(input):asBytes(input),crc=crc32(data);if(decoder.decode(name)!==path)throw new Error('ZIP filename contains invalid Unicode');if(name.length>65535||data.length>=0xffffffff)throw new Error('ZIP entry exceeds classic format limits');const h=header(30),v=h.view;v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint16(6,0x800,true);v.setUint16(10,dosTime,true);v.setUint16(12,dosDate,true);v.setUint32(14,crc,true);v.setUint32(18,data.length,true);v.setUint32(22,data.length,true);v.setUint16(26,name.length,true);locals.push(h.bytes,name,data);
     const c=header(46),cv=c.view;cv.setUint32(0,0x02014b50,true);cv.setUint16(4,20,true);cv.setUint16(6,20,true);cv.setUint16(8,0x800,true);cv.setUint16(12,dosTime,true);cv.setUint16(14,dosDate,true);cv.setUint32(16,crc,true);cv.setUint32(20,data.length,true);cv.setUint32(24,data.length,true);cv.setUint16(28,name.length,true);cv.setUint32(42,offset,true);centrals.push(c.bytes,name);offset+=h.bytes.length+name.length+data.length;
   }
   const central=concat(centrals),end=header(22),v=end.view,count=Object.keys(files).length;v.setUint32(0,0x06054b50,true);v.setUint16(8,count,true);v.setUint16(10,count,true);v.setUint32(12,central.length,true);v.setUint32(16,offset,true);return concat([...locals,central,end.bytes]);
@@ -67,6 +76,7 @@ function fileName(raw, flags, fields, encoding) {
  * Format references: PKWARE APPNOTE 4.3, 4.5.3, 4.6.9 and Appendix D.
  */
 export async function readZip(input, {maxExpandedBytes = 50 * 1024 * 1024, maxFiles = 2000, filenameEncoding = 'cp437', strictEntries = false} = {}) {
+  maxExpandedBytes=zipLimit('maxExpandedBytes',maxExpandedBytes);maxFiles=zipLimit('maxFiles',maxFiles);
   filenameEncoding=zipFilenameEncoding(filenameEncoding);
   const bytes = asBytes(input), v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let end = -1;
@@ -98,7 +108,7 @@ export async function readZip(input, {maxExpandedBytes = 50 * 1024 * 1024, maxFi
   if (count !== diskCount) throw new Error('Multi-disk ZIP is not supported');
   if (count > maxFiles) throw new Error('ZIP has too many files');
   if (central + centralSize !== directoryEnd) throw new Error('Invalid ZIP directory bounds');
-  let pos = central, total = 0; const records = [], names = new Set(), ranges = [];
+  let pos = central, total = 0; const records = [], entries = new Map(), parents = new Set(), ranges = [];
   for (let i = 0; i < count; i++) {
     if (pos + 46 > directoryEnd || v.getUint32(pos, true) !== 0x02014b50) throw new Error('Invalid ZIP directory');
     const flags = v.getUint16(pos + 8, true), method = v.getUint16(pos + 10, true), crc = v.getUint32(pos + 16, true);
@@ -120,8 +130,8 @@ export async function readZip(input, {maxExpandedBytes = 50 * 1024 * 1024, maxFi
       if (name !== normalized + (directory ? '/' : '')) throw new Error('Noncanonical deployment ZIP path');
       if (kind && kind !== (directory ? 0x4000 : 0x8000)) throw new Error('Special files are not permitted in a deployment ZIP');
     }
-    if (names.has(normalized.toLowerCase())) throw new Error('Duplicate ZIP entry: ' + name);
-    names.add(normalized.toLowerCase());
+    const directory = /[\\/]$/.test(name);
+    registerZipPath(entries,parents,normalized,directory);
     total += expanded;
     if (total > maxExpandedBytes) throw new Error('ZIP expansion limit exceeded');
     if (offset + 30 > central || v.getUint32(offset, true) !== 0x04034b50) throw new Error('Invalid ZIP file header');
@@ -148,7 +158,6 @@ export async function readZip(input, {maxExpandedBytes = 50 * 1024 * 1024, maxFi
       rangeEnd = found + 4 + width * 2;
     }
     ranges.push([offset, rangeEnd]);
-    const directory = /[\\/]$/.test(name);
     if (directory && expanded) throw new Error('ZIP directory contains file data');
     records.push({name: normalized, start, size, expanded, method, crc, directory});
     pos = next;

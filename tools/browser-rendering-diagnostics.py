@@ -11,9 +11,9 @@ import http.server
 import json
 import os
 from pathlib import Path
-import shlex
 import threading
 from playwright.sync_api import sync_playwright
+from rendering_launch import rendering_launch_flags
 from rendering_pixels import compare_pixels
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,10 +41,7 @@ def main():
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Quiet, directory=ROOT))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     report = {'diagnosticOnly': True, 'variants': []}
-    flags = ['--no-sandbox', '--enable-unsafe-webgpu', '--enable-unsafe-swiftshader',
-             '--use-angle=swiftshader', '--use-vulkan=swiftshader', '--disable-partial-raster',
-             '--run-all-compositor-stages-before-draw']
-    flags += shlex.split(os.environ.get('RENDERING_BROWSER_FLAGS', ''))
+    flags = rendering_launch_flags(software_gpu=True)
     report['flags'] = flags
     try:
         with sync_playwright() as pw:

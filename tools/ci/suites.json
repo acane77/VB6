@@ -2,7 +2,9 @@
   "core-runtime": [
     "browser-tests.py",
     "browser-language-parity.py",
-    "browser-compiler-runtime.py"
+    "browser-compiler-runtime.py",
+    "browser-data-sources.py",
+    "browser-data-layout.py"
   ],
   "core-parity": [
     "browser-parity-tests.py",
@@ -21,6 +23,7 @@
     "browser-windows-tests.py",
     "browser-core-primitives.py",
     "browser-graphics-tests.py",
+    "browser-data-recordsets.py",
     "browser-rendering-resources.py"
   ],
   "integration-authoring": [

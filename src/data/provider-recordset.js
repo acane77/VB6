@@ -1,11 +1,12 @@
-import {DisconnectedRecordset,fieldValue} from './recordset.js';
+import {isDataCommand} from './defaults.js';
+import {DisconnectedRecordset,fieldValue,dataInteger,fieldDefinition} from './recordset.js';
 import {assertData,after,DATA_LIMITS,sameValue} from './common.js';
 
 /** The same observable cursor as the bound controls use, with awaited provider writes. */
 export class ProviderRecordset extends DisconnectedRecordset {
   constructor(context){
     super();this.context=context;this.__type='ADODB.Recordset';this.Source='';this.ActiveConnection=null;
-    this._writer=null;this._busy=false;this._ownedConnection=false;this._options=1;this._parameters=[];
+    this._writer=null;this._busy=false;this._ownedConnection=false;this._options=1;this._parameters=[];this._openGeneration=0;this._openingConnection=null;this._openingCommand=null;
   }
   guard(){assertData(!this._busy,'A recordset operation is already pending',3219);}
   load(result,lock=1){
@@ -14,9 +15,9 @@ export class ProviderRecordset extends DisconnectedRecordset {
     assertData([1,3].includes(Number(lock)),'Only read-only and optimistic recordsets are supported',3251);
     if(Number(lock)===3)assertData(result.write,'This result is read-only. Open a keyed table or configure REST write operations.',3251);
     // Validate the entire result before replacing the existing cursor.
-    const columns=result.columns.map(c=>({Name:String(c.Name),Type:Number(c.Type||12),DefinedSize:Number(c.DefinedSize||0)}));
+    const columns=result.columns.map(fieldDefinition);
     assertData(new Set(columns.map(c=>c.Name.toLowerCase())).size===columns.length,'Duplicate result column names; use SQL aliases',3191);
-    const rows=result.values.map(values=>{assertData(values.length===columns.length,'Inconsistent result width',13);return Object.fromEntries(columns.map((col,i)=>[col.Name,fieldValue(col,values[i]) ]));});
+    const rows=result.values.map(values=>{assertData(Array.isArray(values)&&values.length===columns.length,'Inconsistent result width',13);return Object.fromEntries(columns.map((col,i)=>[col.Name,fieldValue(col,values[i]) ]));});
     this.columns=columns;this.rows=rows;this._lock=Number(lock);this._state=1;this._cache=null;this._pending=null;this.position=0;
     this._filter='';this._sort='';this._predicate=null;this._sortSpecs=[];this._writer=result.write||null;
     for(const row of this.rows)this._bookmarks.set(row,this._nextBookmark++);
@@ -24,20 +25,36 @@ export class ProviderRecordset extends DisconnectedRecordset {
   }
   async Open(source,connection,cursor,lock,options){
     this.guard();assertData(!this.State,'Recordset is already open',3705);
+    source=source??this.Source;
     if((source===undefined||source==='')&&!connection&&!this.ActiveConnection)return super.Open(source,connection,cursor,lock,options);
     assertData(cursor===undefined||[0,3].includes(Number(cursor)),'Only materialized forward/static cursors are supported',3251);
-    this.Source=source??this.Source;this.ActiveConnection=connection||this.ActiveConnection;
-    if(typeof this.ActiveConnection==='string'){
-      const cn=this.context.connection();await cn.Open(this.ActiveConnection);this.ActiveConnection=cn;this._ownedConnection=true;
-    }
-    assertData(this.ActiveConnection?.query,'A valid ActiveConnection is required',3709);
-    this._options=Number(options??1);this._busy=true;
+    assertData(lock===undefined||[1,3,4].includes(Number(lock)),'Unsupported lock type',3251);
+    const command=isDataCommand(source),active=connection??this.ActiveConnection;
+    if(command){assertData(source.context===this.context,'Command belongs to another data context',3001);assertData(!active,'An ActiveConnection cannot be supplied with a Command source',3707);}
+    else assertData(typeof source==='string','Recordset Source must be text or an ADO Command',13);
+    const generation=++this._openGeneration;let cn,owned=false,failure;
+    this._busy=true;
     try{
-      const result=await this.ActiveConnection.query(this.Source,this._parameters,this._options);
-      assertData(!this.context.closed&&this.ActiveConnection.State===1,'Connection closed before the query completed',3704);
-      this.load(result,lock??1);this.ActiveConnection.recordsets.add(this);
-    }catch(error){if(this._ownedConnection)await this.ActiveConnection.Close();throw error;}
-    finally{this._busy=false;}
+      if(command){this._openingCommand=source;await source.execute(undefined,undefined,options??source.CommandType,this,lock??1);return;}
+      cn=typeof active==='string'?this.context.connection():active;owned=typeof active==='string';
+      assertData(cn?.query,'A valid ActiveConnection is required',3709);this._openingConnection=cn;
+      if(owned)await cn.Open(active);
+      assertData(generation===this._openGeneration,'Recordset opening was cancelled',-2147467260);
+      this.Source=source;this.ActiveConnection=cn;this._options=Number(options??1);
+      const result=await cn.query(source,this._parameters,this._options);
+      assertData(!this.context.closed&&cn.State===1,'Connection closed before the query completed',3704);
+      assertData(generation===this._openGeneration,'Recordset opening was cancelled',-2147467260);
+      this.load(result,lock??1);cn.recordsets.add(this);this._ownedConnection=owned;
+    }catch(error){failure=error;throw error;}
+    finally{
+      try{if(failure&&owned)try{await cn.Close();}catch(cleanup){failure.cleanupError=cleanup;}}
+      finally{this._busy=false;this._openingConnection=null;this._openingCommand=null;}
+    }
+  }
+  Cancel(){
+    this._openGeneration++;
+    if(this._openingCommand)this._openingCommand.Cancel();
+    else (this._openingConnection||this.ActiveConnection)?.Cancel?.();
   }
   Item(key){return this.Fields.Item(key).Value;}
   setItem(key,value){this.Fields.Item(key).Value=value;}
@@ -73,19 +90,45 @@ export class ProviderRecordset extends DisconnectedRecordset {
   moveTo(position){if(this._updatePromise)return this._updatePromise.then(()=>this.moveTo(position));this.guard();this.requireOpen();return after(this.Update(),()=>{this.position=Math.max(-1,Math.min(this.RecordCount,position));this.notify('move');});}
   MoveFirst(){return this.moveTo(0);}MoveLast(){return this.moveTo(this.RecordCount-1);}
   MoveNext(){return this.moveTo(this.position+1);}MovePrevious(){return this.moveTo(this.position-1);}
-  Move(count,start){if(start!==undefined)this.Bookmark=start;return this.moveTo(this.position+Number(count));}
+  Move(count,start){count=dataInteger(count);if(start!==undefined)this.bookmarkPosition(start);return after(this.Update(),()=>{const position=start===undefined?this.position:this.bookmarkPosition(start);return this.moveTo(position+count);});}
   ensurePropertyEdit(){this.guard();assertData(!this._pending||!this._writer,'Call Update or CancelUpdate before changing a connected cursor property',3219);}
   get Filter(){return super.Filter;}set Filter(value){this.ensurePropertyEdit();super.Filter=value;}
   get Sort(){return super.Sort;}set Sort(value){this.ensurePropertyEdit();super.Sort=value;}
   get Bookmark(){return super.Bookmark;}set Bookmark(value){this.ensurePropertyEdit();super.Bookmark=value;}
   get AbsolutePosition(){return super.AbsolutePosition;}set AbsolutePosition(value){this.ensurePropertyEdit();super.AbsolutePosition=value;}
-  GetRows(...args){return after(this.Update(),()=>super.GetRows(...args));}
+  GetRows(...args){this.rowsArguments(...args);return after(this.Update(),()=>super.GetRows(...args));}
   GetString(format=2,count=-1,columnDelimiter='\t',rowDelimiter='\r',nullValue=''){
-    assertData(Number(format)===2,'Only adClipString is supported',3251);
-    return after(this.Update(),()=>{const start=Math.max(0,this.position),rows=this.view().slice(start,Number(count)<0?undefined:start+Number(count));const text=rows.map(row=>this.columns.map(col=>row[col.Name]??nullValue).join(columnDelimiter)+rowDelimiter).join('');this.moveTo(start+rows.length);return text;});
+    this.requireOpen();assertData(Number(format)===2,'Only adClipString is supported',3251);
+    count=dataInteger(count);assertData(count>=-1,'Invalid row count',3001);
+    columnDelimiter=String(columnDelimiter);rowDelimiter=String(rowDelimiter);nullValue=String(nullValue);
+    const limit=DATA_LIMITS.bytes/2;
+    assertData(Math.max(columnDelimiter.length,rowDelimiter.length,nullValue.length)<=limit,'GetString allocation limit exceeded',7);
+    return after(this.Update(),()=>{
+      const start=Math.max(0,this.position),end=count===-1?this.RecordCount:Math.min(this.RecordCount,start+count);
+      const parts=[];let length=0;
+      const append=value=>{length+=value.length;assertData(length<=limit,'GetString allocation limit exceeded',7);parts.push(value);};
+      for(let r=start;r<end;r++){
+        for(let c=0;c<this.columns.length;c++){
+          if(c)append(columnDelimiter);
+          const value=this.view()[r][this.columns[c].Name];append(value==null?nullValue:String(value));
+        }
+        append(rowDelimiter);
+      }
+      const text=parts.join('');this.moveTo(end);return text;
+    });
   }
   Find(criteria,skip=0,direction=1,start){
-    return after(this.Update(),()=>{if(start!==undefined)this.Bookmark=start;const predicate=this.compileFilter(String(criteria));assertData(predicate,'Find requires criteria');const step=Number(direction)===-1?-1:1;let index=this.position+Number(skip);for(;index>=0&&index<this.RecordCount;index+=step)if(predicate(this.view()[index]))break;return this.moveTo(index);});
+    this.requireOpen();skip=dataInteger(skip);direction=dataInteger(direction);
+    assertData(skip>=0,'Find SkipRows must be nonnegative',3001);
+    assertData(direction===1||direction===-1,'Invalid search direction',3001);
+    const predicate=this.compileFilter(String(criteria),{single:true});assertData(predicate,'Find requires criteria');
+    if(start!==undefined)this.bookmarkPosition(start);
+    return after(this.Update(),()=>{
+      const origin=start===undefined?this.position:this.bookmarkPosition(start),rows=this.view();
+      let index=origin+direction*skip;
+      for(;index>=0&&index<rows.length;index+=direction)if(predicate(rows[index]))break;
+      return this.moveTo(index);
+    });
   }
   setRowValue(row,key,value,expected){
     this.guard();this.requireWrite();const column=this.column(key),next=fieldValue(column,value);
