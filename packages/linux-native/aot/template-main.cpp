@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
     entries.reserve(offsets.size());
     for (const auto& entry : offsets) {
       const auto offset = entry.integer();
-      if (offset < 0 || uint32_t(offset) >= codeSize || offset % 16)
+      if (offset < 0 || uint64_t(offset) >= codeSize || offset % 16)
         throw std::runtime_error("Invalid AOT procedure address");
       entries.push_back(reinterpret_cast<vb6::aot::Entry>(codeAddress + uintptr_t(offset)));
     }

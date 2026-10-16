@@ -75,7 +75,7 @@ export async function buildLinuxAOTTemplate({out=path.join(root,'artifacts/linux
     await fs.mkdir(out,{recursive:true});const info=await fs.lstat(out);if(!info.isDirectory()||info.isSymbolicLink())throw new Error('Runtime output must be a regular directory.');
     await fs.writeFile(path.join(out,'runtime-x86_64'),bytes,{flag:'wx',mode:0o644});
     await fs.writeFile(path.join(out,'runtime.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx',mode:0o644});
-    return {bytes,manifest};
+    return {bytes,manifest,build:{compiler:cxx,cflags,libraries,objects:sources.map((source,index)=>({source,object:objects[index]}))}};
   }finally {await fs.rm(work,{recursive:true,force:true});}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href) {

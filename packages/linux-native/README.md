@@ -6,7 +6,7 @@ The compiler reuses the VB6 parser, binder, native lowering graph, resource cata
 
 ## Export from the IDE
 
-Choose **File → Make Linux Executable (GTK)…**, select a project name and optimization level, and export the application ZIP. The ZIP contains an executable under **NAME/bin/NAME**, a **Resources** directory, source map, build report and integrity manifest. Extract the entire application directory, then run **./NAME/bin/NAME**.
+Choose **File → Make MyProject (Linux GTK AOT)…** to open **Make Linux GTK Application**, select a project name and optimization level, and export the application ZIP. The menu uses the current project's name. The ZIP contains an executable under **NAME/bin/NAME**, a **Resources** directory, source map, build report and integrity manifest. Extract the entire application directory, then run **./NAME/bin/NAME**.
 
 The download works without a Linux compiler, compiler bridge or network connection. The browser never executes the Linux application.
 

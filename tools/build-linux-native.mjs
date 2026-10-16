@@ -16,6 +16,7 @@ export function buildLinuxPackage(sourceRoot=root,{allowStaleAOTRuntime=false}={
   fs.mkdirSync(path.join(directory,'dist'),{recursive:true});fs.mkdirSync(path.join(sourceRoot,'dist'),{recursive:true});
   fs.writeFileSync(path.join(directory,'dist/index.js'),esm);fs.writeFileSync(path.join(directory,'dist/browser.js'),iife);fs.writeFileSync(path.join(sourceRoot,'dist/vb6-linux.js'),iife);
   const sdk=readLinuxAOTSources(sourceRoot);
+  fs.rmSync(path.join(directory,'dist/sdk'),{recursive:true,force:true});
   for(const [name,content]of Object.entries(sdk.files)){const destination=path.join(directory,'dist/sdk',name);fs.mkdirSync(path.dirname(destination),{recursive:true});fs.writeFileSync(destination,content);}
   const license=fs.readFileSync(path.join(sourceRoot,'LICENSE'),'utf8').replace(/\r\n/g,'\n');
   fs.writeFileSync(path.join(directory,'LICENSE'),license);

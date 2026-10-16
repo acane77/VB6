@@ -18,6 +18,7 @@ test('Linux payload matches native source and actual execution provenance',()=>{
   for(const [name,value]of Object.entries(readLinuxAOTSourceProvenance()))assert.equal(manifest.provenance[name],value);
   assert.equal(manifest.verification.x64ExecutionVerified,true);
   assert.equal(manifest.verification.gtkExecutionVerified,true);
+  assert.equal(manifest.verification.gtkNativeSignalsVerified,true);
   assert.deepEqual(manifest.verification.optimizationLevelsVerified,[0,1,2,3]);
 });
 test('Linux Node APIs export exclusive archives and application directories',async t=>{

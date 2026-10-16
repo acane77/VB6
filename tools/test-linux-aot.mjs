@@ -71,8 +71,17 @@ export async function testLinuxAOT({rebuild=false,runtimeDirectory,reportDirecto
     report.runtime=runtime.manifest;
     for(const [name,value]of Object.entries(readLinuxAOTSourceProvenance(root)))
       assert.equal(runtime.manifest.provenance?.[name],value,'Native runtime source provenance: '+name);
+    if(rebuild) {
+      const source=path.join(root,'packages/linux-native/tests/gtk-contracts.cpp'),executable=path.join(work,'gtk-native-contracts');
+      const includes=['-I',path.join(root,'packages/macos-native/native'),'-I',path.join(root,'packages/macos-native/aot'),'-I',path.join(root,'packages/linux-native/native')];
+      const objects=runtime.build.objects.filter(entry=>entry.source!=='aot/template-main.cpp').map(entry=>entry.object);
+      await run(runtime.build.compiler,['-std=c++17','-O2','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-deprecated-declarations',...includes,...runtime.build.cflags,source,...objects,...runtime.build.libraries,'-ldl','-pthread','-o',executable]);
+      assert.match(await run(await linuxNativeTool('xvfb-run'),['-a',executable]),/LINUX_GTK_NATIVE_SIGNALS_OK/);
+      report.gtkNativeSignalsVerified=true;
+      report.checks.push('Native GTK signals and admitted widget types executed against the exact rebuilt SDK objects');
+    }
     const template=path.join(work,'unpopulated-runtime');await fs.writeFile(template,runtime.bytes,{mode:0o755});
-    await assert.rejects(run(template),error=>error.exitCode===2&&/unpopulated VB6 AOT runtime template/.test(error.output||''));
+    await assert.rejects(run(template),error=>(error.exitCode??error.code)===2&&/unpopulated VB6 AOT runtime template/.test(error.output||''));
     report.checks.push('Unpopulated native template refuses execution');
 
     const nativeCase=async(label,project,optimization,validate,{gtk=false}={})=>{
@@ -125,8 +134,15 @@ export async function testLinuxAOT({rebuild=false,runtimeDirectory,reportDirecto
     const image=inspectLinuxELF(resourceCase.result.executable,{requireProject:true}),broken=resourceCase.result.executable.slice();
     new DataView(broken.buffer).setUint32(image.metadataOffset+8,0xffffffff,true);
     const corrupted=path.join(work,'corrupted-loader');await fs.writeFile(corrupted,broken,{mode:0o755});
-    await assert.rejects(run(corrupted),error=>error.exitCode===2&&/Invalid AOT project payload sizes/.test(error.output||''));
+    await assert.rejects(run(corrupted),error=>(error.exitCode??error.code)===2&&/Invalid AOT project payload sizes/.test(error.output||''));
     report.checks.push('Native loader rejects malformed project metadata before executing project code');
+    const badEntries=structuredClone(image.metadataJSON);badEntries.entries[0]=4294967296;
+    const altered=new TextEncoder().encode(JSON.stringify(badEntries)),entryBytes=resourceCase.result.executable.slice();
+    assert.ok(altered.length<=image.metadata.fileSize-(image.metadataOffset-image.metadata.offset)-16);
+    new DataView(entryBytes.buffer).setUint32(image.metadataOffset+8,altered.length,true);entryBytes.set(altered,image.metadataOffset+16);
+    const invalidEntry=path.join(work,'invalid-procedure-entry');await fs.writeFile(invalidEntry,entryBytes,{mode:0o755});
+    await assert.rejects(run(invalidEntry),error=>(error.exitCode??error.code)===2&&/Invalid AOT procedure address/.test(error.output||''));
+    report.checks.push('Native loader rejects procedure offsets outside the complete 64-bit address range');
 
     for(const [name,value]of Object.entries(readLinuxAOTSourceProvenance(root)))
       assert.equal(runtime.manifest.provenance?.[name],value,'Source changed during native acceptance: '+name);
