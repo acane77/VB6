@@ -33,7 +33,7 @@ function createSearch(c) {
   };
   const pointer = event => {if (enabled(c)) event.preventDefault();};
   const key = event => {
-    if (c.props.MacOSControlStyle === 'search' && event.key === 'Escape' && !event.defaultPrevented && !event.isComposing && !event.altKey && !event.ctrlKey && !event.metaKey) reset(event);
+    if (c.props.MacOSControlStyle === 'search' && event.key === 'Escape' && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229 && !event.altKey && !event.ctrlKey && !event.metaKey) reset(event);
   };
   clear.addEventListener('pointerdown',pointer);clear.addEventListener('click',reset);
   c.input.addEventListener('input',update);c.input.addEventListener('keydown',key);

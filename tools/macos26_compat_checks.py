@@ -74,11 +74,19 @@ class MacOS26CompatibilityChecks:
         # state to exercise the real input handler's Escape guard explicitly.
         search.evaluate('''e=>{
             e.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true,data:'日本語'}));
-            e.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true,isComposing:true}));
+            for(const key of ['Escape','Enter']){
+                e.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,isComposing:true}));
+                e.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,keyCode:229}));
+            }
             e.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:'日本語'}));
         }''')
+        page.wait_for_function('!vb6Application.vm.processing&&vb6Application.vm.eventQueue.length===0',polling=100)
         expect(search).to_have_value('日本語')
         expect(status).to_have_text('5:日本語')
+        expect(cancel).to_have_text('cancel 1')
+        expect(page.locator('[data-control="ActionStatus"]')).to_have_text('Not saved')
+        search.press('Enter')
+        expect(page.locator('[data-control="ActionStatus"]')).to_have_text('saved:日本語')
         self.macos26_set('Search', {'Enabled':0})
         expect(search).to_be_disabled()
         expect(clear).to_be_disabled()
