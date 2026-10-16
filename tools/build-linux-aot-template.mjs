@@ -46,7 +46,8 @@ export async function buildLinuxAOTTemplate({out=path.join(root,'artifacts/linux
     await fs.mkdir(cache,{recursive:true});const cacheInfo=await fs.lstat(cache);if(!cacheInfo.isDirectory()||cacheInfo.isSymbolicLink())throw new Error('Runtime cache must be a regular directory.');
     const compileOptions=['-std=c++17','-O2','-fPIE','-fexceptions','-fstack-protector-strong','-D_FORTIFY_SOURCE=2','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-deprecated-declarations'];
     const flags=[...compileOptions,'-I',path.join(work,'native'),'-I',path.join(work,'shared-aot'),'-I',path.join(work,'gtk'),...cflags];
-    const sources=Object.keys(snapshot.files).filter(name=>name.endsWith('.cpp')).sort(),objects=new Array(sources.length);
+    const group=name=>name.startsWith('native/')?0:name.startsWith('shared-aot/')?1:name.startsWith('gtk/')?2:3;
+    const sources=Object.keys(snapshot.files).filter(name=>name.endsWith('.cpp')).sort((a,b)=>group(a)-group(b)||a.localeCompare(b)),objects=new Array(sources.length);
     const portableHeaders=Object.entries(snapshot.files).filter(([name])=>name.endsWith('.hpp')&&!name.startsWith('gtk/')).sort().map(([name,value])=>name+'\0'+value).join('\0');
     const gtkHeaders=Object.entries(snapshot.files).filter(([name])=>name.startsWith('gtk/')&&name.endsWith('.hpp')).sort().map(([name,value])=>name+'\0'+value).join('\0');
     let next=0;const errors=[];

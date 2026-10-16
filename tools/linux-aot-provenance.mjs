@@ -33,7 +33,7 @@ export function checkLinuxAOTRuntimeProvenance(sourceRoot=root) {
   const match=/^export const LINUX_AOT_RUNTIME_MANIFEST=(.+);$/m.exec(source);
   if(!match)throw new Error('Missing Linux AOT runtime manifest; build, validate and embed the runtime.');
   const manifest=JSON.parse(match[1]);
-  if(manifest.abi!==AOT_ABI||manifest.architecture!=='x86_64'||!manifest.verification?.x64ExecutionVerified||manifest.verification.platform!=='linux')
+  if(!manifest||manifest.abi!==AOT_ABI||manifest.architecture!=='x86_64'||!manifest.verification?.x64ExecutionVerified||manifest.verification.platform!=='linux')
     throw new Error('Linux AOT runtime lacks native execution provenance.');
   for(const [name,value]of Object.entries(readLinuxAOTSourceProvenance(sourceRoot)))
     if(manifest.provenance?.[name]!==value)throw new Error('Linux AOT runtime is stale: '+name+'. Rebuild, validate and embed the runtime.');
