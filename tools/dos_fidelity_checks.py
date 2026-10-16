@@ -37,7 +37,7 @@ def run_fidelity_checks(browser, root, report):
                   const field=presenter.chrome.entries.get(canonicalInput);
                   assertTUI(field?.field&&field.canvas.parentElement===canonicalInput.offsetParent,'void field projection missing');
                   const title=[...presenter.chrome.entries].find(([n])=>n.matches('.properties-panel .tool-caption'))?.[1];
-                  assertTUI(title?.buffer.toText().includes('Properties'),'dock title was truncated');
+                  assertTUI(title?.buffer?.toText().includes('Properties'),'dock title was truncated');
                   const frames=[...presenter.chrome.entries.values()].filter(e=>e.frame&&e.visible&&e.painter);
                   let pixels=0;
                   for(const entry of frames){
@@ -113,7 +113,9 @@ def run_fidelity_checks(browser, root, report):
                   vb6Studio.renderDebug();
                   window.output=document.querySelector('.immediate-output');output.scrollTop=output.scrollHeight;
                 }''')
-                page.wait_for_function("presenter.chrome.entries.get(output)?.buffer.toText().includes('transcript line 79')")
+                # Entry discovery precedes first paint; await a non-null buffer
+                # rather than throwing inside the readiness predicate.
+                page.wait_for_function("presenter.chrome.entries.get(output)?.buffer?.toText().includes('transcript line 79')")
                 page.evaluate('''()=>{
                   const entry=presenter.chrome.entries.get(output);
                   assertTUI(entry.state.transcript&&!entry.fallback,'Immediate output not projected');
@@ -130,7 +132,7 @@ def run_fidelity_checks(browser, root, report):
                 }''')
                 page.wait_for_function("presenter.chrome.entries.get(output)?.state.items.some(item=>item.selected)")
                 page.get_by_label('Immediate expression', exact=True).fill('? 2 + 3')
-                page.wait_for_function("presenter.chrome.entries.get(document.querySelector('.immediate-input-row'))?.buffer.toText().includes('? 2 + 3')")
+                page.wait_for_function("presenter.chrome.entries.get(document.querySelector('.immediate-input-row'))?.buffer?.toText().includes('? 2 + 3')")
                 page.evaluate("document.getSelection().removeAllRanges();vb6Studio.debuggerWindows.hide('immediate')")
                 page.evaluate('''()=>{
                   assertTUI(JSON.stringify(vb6Studio.project)===modelBefore,'cancel mutated project');
@@ -150,7 +152,7 @@ def run_fidelity_checks(browser, root, report):
                   assertTUI(tree.selected===199,'original debug keyboard navigation was lost');
                   const row=tree.root.querySelector('[data-expression="value199"]');
                   assertTUI(row&&parseFloat(row.style.top)===199*tree.rowHeight,'selected row was not virtualized at the cell pitch');
-                  assertTUI(presenter.chrome.entries.get(row)?.buffer.toText().includes('value199'),'debug text not projected');
+                  assertTUI(presenter.chrome.entries.get(row)?.buffer?.toText().includes('value199'),'debug text not projected');
                 }''')
                 page.evaluate("vb6Studio.debuggerWindows.hide('locals')")
                 page.evaluate('''async()=>{
