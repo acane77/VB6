@@ -56,6 +56,7 @@ export async function testLinuxDistribution({architecture=process.arch,sysroot,r
           assert.equal(run('rpm',['--dbpath',dbpath,'--query','--package','--queryformat','%{ARCH}',file]),architecture==='arm64'?'aarch64':'x86_64');
           const requires=run('rpm',['--dbpath',dbpath,'--query','--package','--requires',file]);
           assert.match(requires,/GLIBCXX_3\.4\.32/);assert.match(requires,/CXXABI_1\.3\.13/);assert.match(requires,/gtk3 >= 3\.24/);
+          for(const version of architecture==='arm64'?['3.0','4.2.0','4.5.0']:['3.0','4.2.0'])assert.ok(requires.includes('libgcc_s.so.1(GCC_'+version+')(64bit)'),'RPM omits its required GCC_'+version+' capability');
           const scripts=run('rpm',['--dbpath',dbpath,'--query','--package','--scripts',file]);assert.equal(scripts,'');
           const payload=run('rpm2cpio',[file],{encoding:null});run('cpio',['-idm','--quiet','--no-absolute-filenames'],{cwd:directory,input:payload});
           const damaged=exported.bytes.slice();damaged[damaged.length-20]^=1;const invalid=path.join(work,'damaged.rpm');await fs.writeFile(invalid,damaged);
@@ -69,7 +70,7 @@ export async function testLinuxDistribution({architecture=process.arch,sysroot,r
       }
       assert.deepEqual(new Uint8Array(await fs.readFile(executable)),app.executable);assert.equal((await fs.stat(executable)).mode&0o777,0o755);
       const versions=run('readelf',['--version-info',executable]);
-      const floors={GLIBC:[2,39],GLIBCXX:[3,4,32],CXXABI:[1,3,13],GCC:[4,2,0]};
+      const floors={GLIBC:[2,39],GLIBCXX:[3,4,32],CXXABI:[1,3,13],GCC:architecture==='arm64'?[4,5,0]:[4,2,0]};
       for(const match of versions.matchAll(/Name: (GLIBCXX|GLIBC|CXXABI|GCC)_([0-9.]+)/g)){
         const required=match[2].split('.').map(Number),available=floors[match[1]];
         let comparison=0;for(let i=0;i<Math.max(required.length,available.length);i++)if(required[i]!==available[i]){comparison=(required[i]||0)-(available[i]||0);if(comparison)break;}

@@ -24,6 +24,7 @@ function rpmParts(bytes) {
     for(let index=0;index<count;index++){
       const at=offset+16+index*16,tag=view.getUint32(at),type=view.getUint32(at+4),start=store+view.getUint32(at+8),items=view.getUint32(at+12);
       if(type===6){let end=start;while(bytes[end])end++;tags.set(tag,Buffer.from(bytes.subarray(start,end)).toString());}
+      else if(type===8){const values=[];let at=start;for(let item=0;item<items;item++){let end=at;while(bytes[end])end++;values.push(Buffer.from(bytes.subarray(at,end)).toString());at=end+1;}tags.set(tag,values);}
       else if(type===7)tags.set(tag,bytes.slice(start,start+items));
       else if(type===4)tags.set(tag,Array.from({length:items},(_,i)=>view.getUint32(start+i*4)));
     }
@@ -72,6 +73,18 @@ test('RPM has independent SHA256 header, payload and file digests plus legacy v4
   assert.equal(main.tags.get(1000),'distribution-app');assert.equal(main.tags.get(1022),'x86_64');assert.equal(main.tags.get(5011)[0],8);
   assert.equal(gunzipSync(payload).subarray(0,6).toString(),'070702');assert.equal(packaged.filename,'distribution-app-2.3.4-5.x86_64.rpm');
   assert.deepEqual((await packageLinuxApplication(app,options)).bytes,packaged.bytes);
+});
+test('RPM declares every required libgcc symbol version for its target architecture',async()=>{
+  for(const architecture of ['x64','arm64']){
+    const app=architecture==='x64'?await exported():await exportLinuxApplication(project,{architecture});
+    const {main}=rpmParts((await packageLinuxApplication(app,{format:'rpm',packageName:'gcc-abi-fixture'})).bytes);
+    const names=main.tags.get(1049),flags=main.tags.get(1048),versions=main.tags.get(1050);
+    assert.equal(names.length,flags.length);assert.equal(names.length,versions.length);
+    const capabilities=names.filter(name=>name.startsWith('libgcc_s.so.1(GCC_'));
+    const expected=architecture==='arm64'?['3.0','4.2.0','4.5.0']:['3.0','4.2.0'];
+    assert.deepEqual(capabilities,expected.map(version=>'libgcc_s.so.1(GCC_'+version+')(64bit)'));
+    for(const capability of capabilities){const index=names.indexOf(capability);assert.equal(flags[index],0);assert.equal(versions[index],'');}
+  }
 });
 test('distribution packaging rejects damaged seals, cancelled work and invalid metadata before compiling',async()=>{
   const app=await exported(),bytes=app.bytes.slice();bytes[0]^=1;
