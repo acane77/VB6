@@ -49,14 +49,17 @@ export async function buildLinuxAOTTemplate({architecture='x64',out,cache=path.j
     const compilerVersion=await invoke(cxx,['--version']),compilerTriple=(await invoke(cxx,['-dumpmachine'])).trim(),gtkVersion=await pkgConfig(['--modversion','gtk+-3.0']);
     if(!(target.option==='arm64'?/^aarch64.*linux/:/^x86_64.*linux/).test(compilerTriple))throw new Error('Native C++ compiler does not target '+target.architecture+': '+compilerTriple);
     await pkgConfig(['--atleast-version=3.24','gtk+-3.0']);
-    const cflags=parsePkgConfigFlags(await pkgConfig(['--cflags','gtk+-3.0'])),libraries=[...parsePkgConfigFlags(await pkgConfig(['--libs','gtk+-3.0'])),'-lcups'];
+    // GtkPrintUnixDialog is in libgtk-3; only its public header directory is
+    // additional. Keep portable object flags stable to reuse the shared SDK.
+    const portableCflags=parsePkgConfigFlags(await pkgConfig(['--cflags','gtk+-3.0']));
+    const cflags=parsePkgConfigFlags(await pkgConfig(['--cflags','gtk+-unix-print-3.0'])),libraries=[...parsePkgConfigFlags(await pkgConfig(['--libs','gtk+-unix-print-3.0'])),'-lcups'];
     const targetFlags=[...(sysroot?['--sysroot='+sysroot]:[]),...(target.option==='arm64'?['-march=armv8-a']:[])];
     let sysrootPackagesSha256;
     if(sysroot){try{sysrootPackagesSha256=hash(await fs.readFile(path.join(sysroot,'.vb6-sysroot-packages.txt')));}catch(error){if(error.code!=='ENOENT')throw error;}}
     for(const [name,content]of Object.entries(snapshot.files)){const destination=path.join(work,name);await fs.mkdir(path.dirname(destination),{recursive:true});await fs.writeFile(destination,content,{flag:'wx'});}
     await fs.mkdir(cache,{recursive:true});const cacheInfo=await fs.lstat(cache);if(!cacheInfo.isDirectory()||cacheInfo.isSymbolicLink())throw new Error('Runtime cache must be a regular directory.');
     const compileOptions=[...targetFlags,'-std=c++17','-O2','-fPIE','-fexceptions','-fstack-protector-strong','-D_FORTIFY_SOURCE=2','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-deprecated-declarations'];
-    const flags=[...compileOptions,'-I',path.join(work,'native'),'-I',path.join(work,'shared-aot'),'-I',path.join(work,'gtk'),...cflags];
+    const flags=[...compileOptions,'-I',path.join(work,'native'),'-I',path.join(work,'shared-aot'),'-I',path.join(work,'gtk')];
     const group=name=>name.startsWith('native/')?0:name.startsWith('shared-aot/')?1:name.startsWith('gtk/')?2:3;
     const sources=Object.keys(snapshot.files).filter(name=>name.endsWith('.cpp')).sort((a,b)=>group(a)-group(b)||a.localeCompare(b)),objects=new Array(sources.length);
     const portableHeaders=Object.entries(snapshot.files).filter(([name])=>name.endsWith('.hpp')&&!name.startsWith('gtk/')).sort().map(([name,value])=>name+'\0'+value).join('\0');
@@ -64,12 +67,12 @@ export async function buildLinuxAOTTemplate({architecture='x64',out,cache=path.j
     let next=0;const errors=[];
     async function worker() {
       while(!errors.length){const index=next++;if(index>=sources.length)return;
-        const name=sources[index],key=hash(compilerTriple+'\0'+compilerVersion+'\0'+gtkVersion+'\0'+(sysrootPackagesSha256||'')+'\0'+JSON.stringify([...compileOptions,...cflags])+'\0'+portableHeaders+'\0'+(name.startsWith('gtk/')?gtkHeaders:'')+'\0'+name+'\0'+snapshot.files[name]);
+        const name=sources[index],sourceCflags=name.startsWith('gtk/')?cflags:portableCflags,key=hash(compilerTriple+'\0'+compilerVersion+'\0'+gtkVersion+'\0'+(sysrootPackagesSha256||'')+'\0'+JSON.stringify([...compileOptions,...sourceCflags])+'\0'+portableHeaders+'\0'+(name.startsWith('gtk/')?gtkHeaders:'')+'\0'+name+'\0'+snapshot.files[name]);
         const cached=path.join(cache,key+'.o');objects[index]=cached;
         try {
           signal?.throwIfAborted();let reusable=false;
           try {const entry=await fs.lstat(cached);reusable=entry.isFile()&&!entry.isSymbolicLink()&&entry.size>0;}catch(error){if(error.code!=='ENOENT')throw error;}
-          if(!reusable){const object=path.join(work,index+'.o');await invoke(cxx,[...flags,'-c',path.join(work,name),'-o',object]);const temporary=cached+'.'+randomUUID();await fs.copyFile(object,temporary);await fs.rename(temporary,cached);}
+          if(!reusable){const object=path.join(work,index+'.o');await invoke(cxx,[...flags,...sourceCflags,'-c',path.join(work,name),'-o',object]);const temporary=cached+'.'+randomUUID();await fs.copyFile(object,temporary);await fs.rename(temporary,cached);}
         }catch(error){errors.push(error);}
       }
     }
