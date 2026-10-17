@@ -52,7 +52,14 @@ test('Cross GTK qualification requires initialized target image-loader and MIME 
     for(const format of ['ico','svg'])await fs.writeFile(path.join(loaders,'libpixbufloader-'+format+'.so'),module);
     await fs.writeFile(path.join(directory,prefix,'loaders.cache'),['ico','svg'].map(format=>'"/'+prefix+'/loaders/libpixbufloader-'+format+'.so"').join('\n')+'\n');
     await fs.writeFile(path.join(directory,'usr/share/mime/mime.cache'),Uint8Array.of(1));
+    await assert.rejects(()=>verifyLinuxAOTExecutionSysroot(directory),/Missing cross-sysroot GTK CUPS print backend/);
+    const gtkModulePath=path.join(directory,'usr/lib/aarch64-linux-gnu/gtk-3.0'),backend=path.join(gtkModulePath,'3.0.0/printbackends/libprintbackend-cups.so');
+    await fs.mkdir(path.dirname(backend),{recursive:true});await fs.writeFile(backend,module);
     const verified=await verifyLinuxAOTExecutionSysroot(directory);assert.deepEqual(verified.imageLoaders,['ico','svg']);assert.match(verified.gdkPixbufCacheSha256,/^[a-f0-9]{64}$/);
+    assert.equal(verified.gtkModulePath,path.join(await fs.realpath(directory),'usr/lib/aarch64-linux-gnu/gtk-3.0'));assert.match(verified.gtkPrintBackendSha256,/^[a-f0-9]{64}$/);
+    view.setUint16(18,62,true);await fs.writeFile(backend,module);
+    await assert.rejects(()=>verifyLinuxAOTExecutionSysroot(directory),/GTK CUPS print backend has the wrong ELF architecture/);
+    view.setUint16(18,183,true);await fs.writeFile(backend,module);
     view.setUint16(18,62,true);await fs.writeFile(path.join(loaders,'libpixbufloader-svg.so'),module);
     await assert.rejects(()=>verifyLinuxAOTExecutionSysroot(directory),/SVG image loader has the wrong ELF architecture/);
   }finally{await fs.rm(directory,{recursive:true,force:true});}

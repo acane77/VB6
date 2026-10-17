@@ -52,7 +52,14 @@ export async function verifyLinuxAOTExecutionSysroot(sysroot,{architecture='arm6
     if(bytes.length<20||view.getUint32(0,true)!==0x464c457f||bytes[4]!==2||bytes[5]!==1||view.getUint16(18,true)!==target.machine)
       throw new Error('Cross-sysroot '+format.toUpperCase()+' image loader has the wrong ELF architecture. '+prerequisites);
   }
-  return {imageLoaders:['ico','svg'],gdkPixbufCacheSha256:hash(cache),mimeCacheSha256:hash(mime)};
+  const gtkModulePath=path.join(directory,'usr/lib',target.triple,'gtk-3.0');
+  let backend;
+  try{backend=await fs.readFile(path.join(gtkModulePath,'3.0.0/printbackends/libprintbackend-cups.so'));}
+  catch(error){if(error.code==='ENOENT')throw new Error('Missing cross-sysroot GTK CUPS print backend. Install the target GTK3 CUPS print backend and its native dependencies before qualification.');throw error;}
+  const backendView=new DataView(backend.buffer,backend.byteOffset,backend.byteLength);
+  if(backend.length<20||backendView.getUint32(0,true)!==0x464c457f||backend[4]!==2||backend[5]!==1||backendView.getUint16(18,true)!==target.machine)
+    throw new Error('Cross-sysroot GTK CUPS print backend has the wrong ELF architecture.');
+  return {imageLoaders:['ico','svg'],gdkPixbufCacheSha256:hash(cache),mimeCacheSha256:hash(mime),gtkModulePath,gtkPrintBackendSha256:hash(backend)};
 }
 export async function buildLinuxAOTTemplate({architecture='x64',out,cache=path.join(root,'.native-build/linux-aot'),jobs=3,compiler,sysroot,log=()=>{},signal}={}) {
   const target=linuxTarget(architecture),cross=process.arch!==target.option;

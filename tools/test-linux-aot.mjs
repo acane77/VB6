@@ -57,11 +57,11 @@ export async function testLinuxAOT({architecture='x64',rebuild=false,runtimeDire
     richTextVerified:false,printerServicesVerified:false,previousInstanceVerified:false,checks:[]};
   const log=value=>{transcript+=value;if(transcript.length>16*1024*1024)transcript=transcript.slice(-16*1024*1024);};
   const run=(executable,args=[],options={})=>runTool(executable,args,{cwd:work,timeout:60000,log,...options});
-  let emulator;
+  let emulator,emulationPrefix=[];
   const execute=async(executable,args=[],{gtk=false,argv0,pageBytes,timeout=60000}={})=>{
     let command=executable,arguments_=args;
     if(pageBytes&&!emulator)throw new Error('Page-size overrides require QEMU execution.');
-    if(emulator){command=emulator;arguments_=['-L',sysroot,...(pageBytes?['-p',String(pageBytes)]:[]),...(argv0?['-0',argv0]:[]),executable,...args];}
+    if(emulator){command=emulationPrefix[0];arguments_=[...emulationPrefix.slice(1),...(pageBytes?['-p',String(pageBytes)]:[]),...(argv0?['-0',argv0]:[]),executable,...args];}
     if(gtk)return run(await linuxNativeTool('xvfb-run'),['-a','--server-args=-screen 0 1280x900x24',command,...arguments_],{timeout});
     return run(command,arguments_,{timeout});
   };
@@ -74,6 +74,10 @@ export async function testLinuxAOT({architecture='x64',rebuild=false,runtimeDire
       report.sysrootEnvironment=await verifyLinuxAOTExecutionSysroot(sysroot,{architecture});
       emulator=await linuxNativeTool(qemu||(architecture==='arm64'?'qemu-aarch64':'qemu-x86_64'));
       report.emulatorVersion=(await run(emulator,['--version'])).trim();
+      // QEMU -L redirects dlopen, but GTK's faccessat-based module discovery
+      // can still miss guest paths. Give this child process an explicit SDK
+      // module path; neither the host environment nor shipped app is changed.
+      emulationPrefix=[await linuxNativeTool('env'),'GTK_PATH='+report.sysrootEnvironment.gtkModulePath,emulator,'-L',sysroot];
     }else if(qemu)throw new Error('Use native execution when the host already matches the requested architecture.');
     if(rebuild&&runtimeDirectory)throw new Error('--rebuild and --runtime are mutually exclusive.');
     await fs.mkdir(artifacts,{recursive:true});
@@ -125,8 +129,8 @@ export async function testLinuxAOT({architecture='x64',rebuild=false,runtimeDire
         const output=await execute(executable,[],{gtk:true});
         assert.match(output,/LINUX_RTF_PARSER_OK/);assert.match(output,/LINUX_GTK_RICHTEXT_OK/);
       });
-      const prefix=emulator?[emulator,'-L',sysroot]:[];
-      const services=await nativeFixture('printers','gtk-services-contracts.cpp',async executable=>qualifyLinuxPrinters(executable,{prefix,printPrefix:[await linuxNativeTool('xvfb-run'),'-a']}));
+      const prefix=[...emulationPrefix];
+      const services=await nativeFixture('printers','gtk-services-contracts.cpp',async executable=>qualifyLinuxPrinters(executable,{prefix,printPrefix:[await linuxNativeTool('xvfb-run'),'-a'],emulated:!!emulator}));
       const instances=await qualifyLinuxInstances(services.executable,{prefix});
       report.nativeFixtures.previousInstance={...services.evidence,qualification:instances};
       report.checks.push('Native rich text, CUPS printing and concurrent application instances executed against the exact rebuilt SDK objects');
@@ -194,7 +198,7 @@ export async function testLinuxAOT({architecture='x64',rebuild=false,runtimeDire
     await nativeCase('gtk-controls',linuxGtkProject(),2,output=>assert.match(output,/LINUX_GTK_CONTROLS_OK/),{gtk:true});
     report.gtkExecutionVerified=true;
     await nativeCase('richtext',linuxRichTextProject(),2,output=>assert.match(output,/LINUX_RICH_PERSISTENCE_OK/),{gtk:true});
-    const serviceProof=await qualifyLinuxCompiledServices(runtime,{architecture,prefix:emulator?[emulator,'-L',sysroot]:[]});
+    const serviceProof=await qualifyLinuxCompiledServices(runtime,{architecture,prefix:[...emulationPrefix]});
     assert.equal(serviceProof.passed,true);report.compiledServices=serviceProof;
     report['compiled-printers-O3']=serviceProof.artifacts.printer;
     report['compiled-instance-O3']=serviceProof.artifacts.instance;
