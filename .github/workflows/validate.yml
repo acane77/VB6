@@ -919,14 +919,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang g++ pkg-config libgtk-3-dev libcups2-dev xvfb xauth dpkg-dev rpm cpio desktop-file-utils
+      - name: Rebuild current native sources and execute generated code
+        run: node tools/test-linux-aot.mjs --architecture "$ARCHITECTURE" --rebuild --report reports/linux-aot/rebuilt
       - name: Build verified offline Linux SDK
         run: node tools/build-linux-native.mjs
       - name: Validate compiler, ELF, archive and package contracts
         run: npm run test:linux
       - name: Execute the shipped native runtime and GTK controls
         run: node tools/test-linux-aot.mjs --architecture "$ARCHITECTURE" --report reports/linux-aot/shipped
-      - name: Rebuild current native sources and execute generated code
-        run: node tools/test-linux-aot.mjs --architecture "$ARCHITECTURE" --rebuild --report reports/linux-aot/rebuilt
       - name: Independently extract native packages and execute installed application paths
         run: node tools/test-linux-distribution.mjs --architecture "$ARCHITECTURE" --report reports/linux-distribution
       - uses: actions/upload-artifact@v4
