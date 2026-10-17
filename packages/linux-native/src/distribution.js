@@ -1,6 +1,6 @@
 /** Offline installable packages built from the same sealed Linux ELF application. */
 import {exportLinuxApplication,unpackLinuxAOTArchive} from './aot-export.js';
-import {linuxOptions,LINUX_LIMITS} from './target.js';
+import {linuxOptions,linuxArtifactFilename,LINUX_LIMITS} from './target.js';
 import {sha256Bytes} from '../../macos-native/src/archive.js';
 import {arArchive,gzipStore,md5Bytes,rpmArchive,tarArchive,utf8} from './distribution-archive.js';
 import {LINUX_RUNTIME_LICENSE} from './runtime-license.js';
@@ -77,7 +77,7 @@ export async function packageLinuxApplication(application,options={}, {signal}={
   const bytes=application.bytes.slice(),unpacked=await unpackLinuxAOTArchive(bytes,compiler);signal?.throwIfAborted();
   const prefix=compiler.name+'/',report=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(unpacked.files.get(prefix+'Resources/vb6-build.json')));
   const applicationSha256=await sha256Bytes(bytes),format=LINUX_DISTRIBUTION_FORMATS[metadata.format];
-  let packaged=bytes,entries,filename=compiler.name+'-linux-'+compiler.architecture+format.extension;
+  let packaged=bytes,entries,filename=linuxArtifactFilename(compiler.name,compiler.architecture,format.extension);
   if(metadata.format==='tar.gz'){
     entries=completeEntries([...unpacked.files].map(([path,value])=>({path,bytes:value,mode:path===prefix+'bin/'+compiler.name?0o755:0o644})));
     packaged=gzipStore(tarArchive(entries));
