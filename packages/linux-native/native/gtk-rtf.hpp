@@ -48,6 +48,7 @@ struct GtkRtfDocument {
   std::vector<std::string> metadata;
 };
 
+bool gtkRtfParagraphEnd(const Text&, size_t position) noexcept;
 void gtkRtfValidateText(const Text&);
 void gtkRtfAppend(GtkRtfDocument&, const Text&, const GtkRtfStyle&);
 GtkRtfDocument gtkRtfParse(const std::string&);

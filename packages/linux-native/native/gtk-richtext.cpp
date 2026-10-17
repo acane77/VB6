@@ -59,18 +59,27 @@ GtkRtfStyle nativeStyle(GtkControl& c,const GtkTextIter& iter) {
     if(!style)foreign=true;
   }
   g_slist_free(list);
-  if(!foreign)return base;
+  auto paragraphStyle=[&](GtkRtfStyle value) {
+    // GTK paragraph layout uses the attributes at the start of the logical
+    // line, even when later character tags carry different paragraph fields.
+    if(!gtk_text_iter_starts_line(&iter)){auto first=iter;gtk_text_iter_set_line_offset(&first,0);value.paragraph=nativeStyle(c,first).paragraph;}
+    return value;
+  };
+  if(!foreign)return paragraphStyle(std::move(base));
   // GTK clipboard/DND can introduce ordinary native text tags. Read their
   // effective properties so a later RTF save does not discard their formatting.
   auto* attributes=gtk_text_attributes_new();gtk_text_iter_get_attributes(&iter,attributes);
   std::unique_ptr<GtkTextAttributes,decltype(&gtk_text_attributes_unref)> owned(attributes,gtk_text_attributes_unref);
   if(attributes->font) {
     if(auto* family=pango_font_description_get_family(attributes->font))base.font=fromUTF8(family);
-    auto size=pango_font_description_get_size(attributes->font);if(size>0)base.size=size/double(PANGO_SCALE);
+    auto size=pango_font_description_get_size(attributes->font);if(size>0)base.size=size*attributes->font_scale/double(PANGO_SCALE);
     base.bold=pango_font_description_get_weight(attributes->font)>=PANGO_WEIGHT_SEMIBOLD;
     base.italic=pango_font_description_get_style(attributes->font)!=PANGO_STYLE_NORMAL;
     base.smallCaps=pango_font_description_get_variant(attributes->font)==PANGO_VARIANT_SMALL_CAPS;
   }
+  if(attributes->appearance.underline!=PANGO_UNDERLINE_NONE&&attributes->appearance.underline!=PANGO_UNDERLINE_SINGLE&&attributes->appearance.underline!=PANGO_UNDERLINE_DOUBLE&&attributes->appearance.underline!=PANGO_UNDERLINE_ERROR)fail(453,"Native underline style cannot be preserved as RTF");
+  for(auto* color:attributes->appearance.rgba)if(color&&color->alpha!=1)fail(453,"Native translucent text colors cannot be preserved as RTF");
+  base.spacing=int(std::lround(attributes->letter_spacing*GtkTwipsPerPixel/PANGO_SCALE));
   base.underline=attributes->appearance.underline==PANGO_UNDERLINE_DOUBLE?2:attributes->appearance.underline==PANGO_UNDERLINE_ERROR?3:attributes->appearance.underline!=PANGO_UNDERLINE_NONE;
   base.strike=attributes->appearance.strikethrough;base.hidden=attributes->invisible;base.protectedText=!attributes->editable;
   const auto rgb=[](GdkColor color){return int((color.red>>8)|((color.green>>8)<<8)|((color.blue>>8)<<16));};
@@ -82,14 +91,14 @@ GtkRtfStyle nativeStyle(GtkControl& c,const GtkTextIter& iter) {
   para.before=attributes->pixels_above_lines*15;para.after=attributes->pixels_below_lines*15;para.lineExtra=attributes->pixels_inside_wrap*15;
   para.rtl=attributes->direction==GTK_TEXT_DIR_RTL;para.tabs.clear();
   if(attributes->tabs)for(int i=0;i<pango_tab_array_get_size(attributes->tabs);++i){PangoTabAlign align;int position;pango_tab_array_get_tab(attributes->tabs,i,&align,&position);if(align!=PANGO_TAB_LEFT)fail(453,"Native rich text contains an unsupported tab alignment");para.tabs.push_back(int(std::lround(position*15.0/(pango_tab_array_get_positions_in_pixels(attributes->tabs)?1:PANGO_SCALE))));}
-  return base;
+  return paragraphStyle(std::move(base));
 }
 GtkRtfStyle insertionStyle(GtkControl& c,int offset) {
   auto& state=rich(c);int length=gtk_text_buffer_get_char_count(state.buffer);
   if(!length)return state.typing;
   if(offset==length&&offset>0) {
     GtkTextIter previous;gtk_text_buffer_get_iter_at_offset(state.buffer,&previous,offset-1);
-    if(gtk_text_iter_get_char(&previous)=='\n')return state.trailing;
+    auto ch=gtk_text_iter_get_char(&previous);if(ch=='\n'||ch=='\r'||ch==0x2029)return state.trailing;
   }
   GtkTextIter iter;gtk_text_buffer_get_iter_at_offset(state.buffer,&iter,offset==length?offset-1:offset);
   return nativeStyle(c,iter);
@@ -220,18 +229,28 @@ GtkRtfDocument slice(const GtkRtfDocument& document,size_t first,size_t last) {
   for(const auto& run:document.runs)if(run.last>first&&run.first<last) {
     auto start=std::max(run.first,first),end=std::min(run.last,last);gtkRtfAppend(result,document.text.substr(start,end-start),run.style);
   }
-  if(last==document.text.size()&&(!last||document.text[last-1]==u'\n'))result.emptyStyle=document.emptyStyle;
+  if(last==document.text.size()&&(!last||gtkRtfParagraphEnd(document.text,last-1)))result.emptyStyle=document.emptyStyle;
   return result;
 }
 void appendDocument(GtkRtfDocument& destination,const GtkRtfDocument& source) {
   for(const auto& run:source.runs)gtkRtfAppend(destination,source.text.substr(run.first,run.last-run.first),run.style);
   destination.emptyStyle=source.emptyStyle;
 }
+GtkRtfDocument normalizeParagraphs(const GtkRtfDocument& source) {
+  GtkRtfDocument result;result.metadata=source.metadata;auto paragraph=source.emptyStyle.paragraph;bool first=true;
+  for(const auto& run:source.runs)for(auto at=run.first;at<run.last;) {
+    auto style=run.style;if(first)paragraph=style.paragraph;style.paragraph=paragraph;
+    auto end=at;do {++end;}while(end<run.last&&!gtkRtfParagraphEnd(source.text,end-1));
+    gtkRtfAppend(result,source.text.substr(at,end-at),style);first=gtkRtfParagraphEnd(source.text,end-1);at=end;
+  }
+  result.emptyStyle=source.emptyStyle;if(!first)result.emptyStyle.paragraph=paragraph;return result;
+}
 void replace(GtkControl& c,GtkRtfDocument replacement,bool whole,bool fire=true) {
   auto original=gtkRichSnapshot(c);auto range=c.editSelection();size_t first=whole?0:range.first,last=whole?original.text.size():first+range.second;
   GtkRtfDocument next;
   if(whole)next=std::move(replacement);
   else {next=slice(original,0,first);appendDocument(next,replacement);appendDocument(next,slice(original,last,original.text.size()));next.metadata=original.metadata;if(last!=original.text.size())next.emptyStyle=original.emptyStyle;}
+  next=normalizeParagraphs(next);
   auto maximum=c.number("maxlength");if(maximum>0&&next.text.size()>size_t(maximum))fail(380,"RTF text exceeds RichTextBox.MaxLength");
   const bool changed=!equal(original,next);auto caret=whole?0:first+replacement.text.size();commit(c,next,caret,0,changed,fire);
 }
@@ -289,9 +308,9 @@ void setAttribute(GtkControl& c,const std::string& name,Value value,int index=-1
   auto range=c.editSelection();auto original=gtkRichSnapshot(c);auto first=range.first,last=first+range.second;
   auto typing=state.typing;formatted(typing,name,value,index); // Validate caret value before any mutation.
   if(paragraphProperty(name)&&!original.text.empty()) {
-    while(first&&original.text[first-1]!=u'\n')--first;
-    if(last==range.first&&last==original.text.size()&&original.text.back()==u'\n')first=last;
-    else {if(last>range.first&&last&&original.text[last-1]==u'\n'){}else {while(last<original.text.size()&&original.text[last]!=u'\n')++last;if(last<original.text.size())++last;}}
+    while(first&&!gtkRtfParagraphEnd(original.text,first-1))--first;
+    if(last==range.first&&last==original.text.size()&&gtkRtfParagraphEnd(original.text,original.text.size()-1))first=last;
+    else {if(last>range.first&&last&&gtkRtfParagraphEnd(original.text,last-1)){}else {while(last<original.text.size()&&(last==first||!gtkRtfParagraphEnd(original.text,last-1)))++last;}}
   }
   if(first==last) {state.typing=typing;state.typingOverride=true;if(first==original.text.size())state.trailing=typing;return;}
   GtkRtfDocument next;next.metadata=original.metadata;next.emptyStyle=original.emptyStyle;
@@ -342,10 +361,11 @@ GtkRtfDocument gtkRichSnapshot(GtkControl& c) {
   while(gtk_text_iter_compare(&iter,&end)<0) {
     if(gtk_text_iter_get_pixbuf(&iter)||gtk_text_iter_get_child_anchor(&iter))fail(453,"RichTextBox contains unsupported embedded content");
     auto next=iter;if(!gtk_text_iter_forward_to_tag_toggle(&next,nullptr))next=end;if(gtk_text_iter_compare(&next,&end)>0)next=end;
+    auto line=iter;gtk_text_iter_forward_line(&line);if(gtk_text_iter_compare(&line,&iter)>0&&gtk_text_iter_compare(&line,&next)<0)next=line;
     auto* text=gtk_text_buffer_get_text(state.buffer,&iter,&next,TRUE);std::unique_ptr<gchar,decltype(&g_free)> owned(text,g_free);
     gtkRtfAppend(document,fromUTF8(text),nativeStyle(c,iter));iter=next;
   }
-  document.emptyStyle=state.trailing;return document;
+  document.emptyStyle=state.trailing;if(!document.text.empty()&&!gtkRtfParagraphEnd(document.text,document.text.size()-1))document.emptyStyle.paragraph=document.runs.back().style.paragraph;return document;
 }
 void gtkRichSetPlain(GtkControl& c,const Text& value,bool whole,bool fire) {
   auto text=value;gtkRtfValidateText(text);auto limit=c.number("maxlength");
@@ -413,7 +433,7 @@ Value gtkRichCall(GtkControl& c,const std::string& name,Args args,bool put) {
     gtk_text_buffer_set_modified(rich(c).buffer,FALSE);return {};
   }
   if(name=="getlinenumber") {
-    if(put||args.size()>1)fail(450);auto text=c.editText();auto offset=integerArgument(args,0,c.editSelection().first);if(offset<0||size_t(offset)>text.size())fail(380);return Value::integer(std::count(text.begin(),text.begin()+offset,u'\n'));
+    if(put||args.size()>1)fail(450);auto text=c.editText();auto offset=integerArgument(args,0,c.editSelection().first);if(offset<0||size_t(offset)>text.size())fail(380);GtkTextIter iter;gtk_text_buffer_get_iter_at_offset(rich(c).buffer,&iter,scalarOffset(text,size_t(offset)));return Value::integer(gtk_text_iter_get_line(&iter));
   }
   if(name=="find") {
     if(put||args.empty()||args.size()>4)fail(450);auto needle=stringArgument(args,0);gtkRtfValidateText(needle);auto text=c.editText();

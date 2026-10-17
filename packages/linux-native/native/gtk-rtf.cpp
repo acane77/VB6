@@ -8,6 +8,9 @@
 #include <limits>
 
 namespace vb6 {
+bool gtkRtfParagraphEnd(const Text& text,size_t position) noexcept {
+  auto ch=text[position];return ch==u'\n'||ch==u'\u2029'||(ch==u'\r'&&(position+1==text.size()||text[position+1]!=u'\n'));
+}
 void gtkRtfValidateText(const Text& text) {
   if(text.size()>GtkRtfMaxText)fail(7,"RichTextBox text exceeds 4 Mi UTF-16 units");
   for(size_t i=0;i<text.size();++i) {
@@ -144,6 +147,13 @@ int required(const Token& token,int minimum,int maximum) {
   if(!token.parameter||token.number<minimum||token.number>maximum)invalid("out-of-range \\"+token.name);
   return int(token.number);
 }
+bool byteCharset(int charset) {
+  switch(charset) {
+    case 0:case 1:case 77:case 128:case 129:case 130:case 134:case 136:case 161:case 162:case 163:
+    case 177:case 178:case 186:case 204:case 222:case 238:case 255:return true;
+    default:return false;
+  }
+}
 int charsetCodepage(int charset,int fallback) {
   switch(charset) {
     case 0:case 1:return fallback;case 77:return 10000;case 128:return 932;case 129:return 949;case 130:return 1361;
@@ -169,7 +179,7 @@ class Reader {
   bool header=false,finished=false;
 
   int page() const {
-    if(state.destination==Destination::Fonts&&state.fontEntry)return state.fontEntry->codepage?state.fontEntry->codepage:state.fontEntry->charset==2?state.codepage:charsetCodepage(state.fontEntry->charset,state.codepage);
+    if(state.destination==Destination::Fonts&&state.fontEntry)return state.fontEntry->codepage?state.fontEntry->codepage:!byteCharset(state.fontEntry->charset)?state.codepage:charsetCodepage(state.fontEntry->charset,state.codepage);
     auto font=fonts.find(state.font);
     return font==fonts.end()?state.codepage:font->second.codepage?font->second.codepage:charsetCodepage(font->second.charset,state.codepage);
   }
@@ -200,7 +210,7 @@ class Reader {
       }else gtkRtfAppend(result,part,state.style);
     };
     size_t first=0;
-    for(size_t i=0;i<value.size();++i)if(value[i]==u'\n') {
+    for(size_t i=0;i<value.size();++i)if(gtkRtfParagraphEnd(value,i)) {
       // Keep a boundary after each paragraph until paragraph formatting has
       // been finalized; a following paragraph can choose a different style.
       append(value.substr(first,i-first+1));finishParagraph();first=i+1;
@@ -272,11 +282,11 @@ class Reader {
     else if(word=="cf")style.foreground=color(token);else if(word=="cb"||word=="highlight")style.background=color(token);
     else if(word=="up"){style.rise=(token.parameter?required(token,0,31680):6)*10;style.script=0;}
     else if(word=="dn"){style.rise=-(token.parameter?required(token,0,31680):6)*10;style.script=0;}
-    else if(word=="super")style.script=1;
-    else if(word=="sub")style.script=-1;
+    else if(word=="super"){style.script=1;style.rise=0;}
+    else if(word=="sub"){style.script=-1;style.rise=0;}
     else if(word=="nosupersub"){style.rise=0;style.script=0;}
     else if(word=="expndtw")style.spacing=required(token,-31680,31680);
-    else if(word=="expnd")style.spacing=required(token,-7936,7936)*5;
+    else if(word=="expnd")style.spacing=required(token,-6336,6336)*5;
     else if(word=="lang"||word=="langfe"||word=="langnp"||word=="langfenp")style.language=required(token,0,65535);
     else if(word=="plain")defaults(target,true,false);
     else if(word=="pard")defaults(target,false,true);
@@ -436,6 +446,7 @@ public:
     if(finished)for(auto token=lexer.next();token.kind!=Token::End;token=lexer.next())if(token.kind!=Token::Bytes||token.bytes.find_first_not_of(" \t")!=std::string_view::npos)invalid("trailing content after root group");
     if(!header||!finished||!groups.empty())invalid("unclosed group");
     finishParagraph();gtkRtfValidateText(result.text);
+    if(!result.text.empty()&&!gtkRtfParagraphEnd(result.text,result.text.size()-1))result.emptyStyle.paragraph=paragraph;
     for(const auto& entry:styles){State checked;defaults(checked);std::set<std::pair<bool,int>> visiting;applyStyle(checked,entry.first.second,entry.first.first,visiting);}
     // The writer needs scalar-aligned ranges even when \u surrogate halves
     // appeared as separate tokens. A formatting change between halves is invalid.
@@ -443,14 +454,14 @@ public:
     return std::move(result);
   }
 };
-void encodedText(std::string& output,const Text& text,bool font=false) {
+void encodedText(std::string& output,const Text& text,bool font=false,bool unicodeASCII=false) {
   for(auto ch:text) {
     if(ch==u'\\'||ch==u'{'||ch==u'}'){output+='\\';output+=char(ch);}
     else if(ch==u'\n')output+="\\par\n";
     else if(ch==u'\r')output+="\\u13?";
     else if(ch==u'\t')output+="\\tab ";
     else if(ch==0x2028)output+="\\line ";
-    else if(ch>=32&&ch<127&&(!font||ch!=u';'))output+=char(ch);
+    else if(ch>=32&&ch<127&&!unicodeASCII&&(!font||ch!=u';'))output+=char(ch);
     else {output+="\\u";output+=std::to_string(int16_t(ch));output+='?';}
     if(output.size()>GtkRtfMaxBytes)fail(7,"Serialized RTF exceeds 16 MiB");
   }
@@ -464,6 +475,21 @@ std::string gtkRtfWrite(const GtkRtfDocument& document) {
   std::map<std::pair<Text,int>,size_t> fonts;
   std::map<int,size_t> colors;
   auto collect=[&](const GtkRtfStyle& style) {
+    // A native clipboard/tag client can supply styles beyond this RTF subset.
+    // Reject those before serialization instead of writing an unreadable file
+    // or silently omitting visible formatting such as custom line spacing.
+    gtkRtfValidateText(style.font);
+    if(style.font.empty()||style.font.size()>255||style.font.find_first_of(u";\r\n\t")!=Text::npos)invalid("invalid font family");
+    if(!std::isfinite(style.size)||style.size<=0||style.size>3072||std::abs(style.size*1000-std::round(style.size*1000))>0.000001)invalid("font size cannot be represented precisely");
+    if(style.underline<0||style.underline>3||style.charset<0||style.charset>255||style.language<0||style.language>65535||style.script< -1||style.script>1)invalid("unsupported character format");
+    if(style.rise%10||std::abs(int64_t(style.rise))>316800||(style.script&&style.rise))unsupported("up/dn (unrepresentable native baseline)");
+    if(std::abs(int64_t(style.spacing))>31680)unsupported("expndtw (native character spacing out of range)");
+    for(auto color:{style.foreground,style.background})if(color< -1||color>0xffffff)invalid("invalid color");
+    const auto& para=style.paragraph;
+    if(para.alignment<0||para.alignment>3||para.left<0||para.right<0||para.left>31680||para.right>31680||std::abs(int64_t(para.first))>31680||para.before<0||para.after<0||para.before>31680||para.after>31680)invalid("invalid paragraph geometry");
+    if(para.lineExtra)unsupported("sl (non-default native line spacing)");
+    if(para.tabs.size()>64)fail(7,"RTF paragraph exceeds 64 tab stops");
+    int previous=-1;for(auto stop:para.tabs){if(stop<0||stop>31680||stop<=previous)invalid("invalid tab stops");previous=stop;}
     if(!fonts.count({style.font,style.charset}))fonts[{style.font,style.charset}]=fonts.size();
     for(auto color:{style.foreground,style.background})if(color>=0&&!colors.count(color))colors[color]=colors.size()+1;
     if(fonts.size()>GtkRtfMaxTable||colors.size()>=GtkRtfMaxTable)fail(7,"RTF font/color table limit exceeded");
@@ -502,10 +528,10 @@ std::string gtkRtfWrite(const GtkRtfDocument& document) {
   size_t previous=0;
   for(const auto& run:document.runs) {
     if(run.first!=previous||run.last<=run.first||run.last>document.text.size())invalid("non-contiguous formatting model");
-    formatting(run.style);encodedText(output,document.text.substr(run.first,run.last-run.first));previous=run.last;
+    formatting(run.style);encodedText(output,document.text.substr(run.first,run.last-run.first),false,!byteCharset(run.style.charset));previous=run.last;
   }
   if(previous!=document.text.size())invalid("text without formatting runs");
-  formatting(document.emptyStyle,document.text.empty()||document.text.back()==u'\n');
+  formatting(document.emptyStyle,document.text.empty()||gtkRtfParagraphEnd(document.text,document.text.size()-1));
   output+='}';if(output.size()>GtkRtfMaxBytes)fail(7,"Serialized RTF exceeds 16 MiB");return output;
 }
 }

@@ -40,6 +40,13 @@ void parser() {
   require(alternatives.text==u"Unicode\u03b1","RTF Unicode alternative destination was duplicated");
   auto bullet=gtkRtfParse(R"({\rtf1{\pntext\u8226?\tab}{\*\pn\pnlvlblt{\pntxtb\u8226?}}\li720\fi-360 item\par})");
   require(bullet.text==u"item\n"&&at(bullet,0).paragraph.bullet,"RTF bullet list fallback leaked into text");same(bullet,gtkRtfParse(gtkRtfWrite(bullet)));
+  auto symbol=gtkRtfParse(R"({\rtf1{\fonttbl{\f0\fcharset2 Symbol;}{\f1\fcharset42 Custom;}}\f0\u65?\u945?\f1\u66?})");
+  require(symbol.text==u"A\u03b1B"&&at(symbol,0).charset==2&&at(symbol,2).charset==42,"Explicit Unicode with legacy font charset was lost");same(symbol,gtkRtfParse(gtkRtfWrite(symbol)));
+  error(453,[&]{gtkRtfParse(R"({\rtf1{\fonttbl{\f0\fcharset2 Symbol;}}\f0 raw})");});
+  auto overriddenScript=gtkRtfParse(R"({\rtf1\up6\super superscript\dn3 baseline})");same(overriddenScript,gtkRtfParse(gtkRtfWrite(overriddenScript)));
+  auto nativeUnsupported=symbol;nativeUnsupported.runs.front().style.paragraph.lineExtra=15;error(453,[&]{gtkRtfWrite(nativeUnsupported);});
+  auto scopedParagraph=gtkRtfParse(R"({\rtf1{\qc centered}})");same(scopedParagraph,gtkRtfParse(gtkRtfWrite(scopedParagraph)));
+  auto paragraphSeparators=gtkRtfParse(R"({\rtf1\qc one\u13?\u10?\qr two\u8233?\ql three\u13?})");same(paragraphSeparators,gtkRtfParse(gtkRtfWrite(paragraphSeparators)));
   auto info=gtkRtfParse(R"({\rtf1{\info{\title Example}{\author Test}}{\*\generator VB6;}\paperw12240\paperh15840 text})");
   auto saved=gtkRtfWrite(info);require(saved.find("\\title Example")!=std::string::npos&&saved.find("\\paperw12240")!=std::string::npos,"RTF metadata was not preserved");
   for(const std::string input:{"", "{\\rtf1", "{\\rtf1 ok}}", "{\\rtf1 ok}garbage", "{\\rtf1\\'xy}", "{\\rtf1\\u-10179?}", "{\\rtf1\\bin999 xx}", "{\\rtf1\\cf20 x}", "{\\rtf1\\fs99999999999 x}", "{\\rtf1{\\stylesheet{\\s1\\sbasedon2 A;}{\\s2\\sbasedon1 B;}}\\s1 x}"})error(380,[&]{gtkRtfParse(input);});
@@ -71,6 +78,11 @@ int main() {
     editor->set(runtime,"text",Value::string(u"# tail"));editor->editSelect(0,1);auto parsedFragment=gtkRtfParse(gtkRtfBytes(fragment.string()));require(parsedFragment.text==u"BOLD","Selected fragment parser text differs");editor->set(runtime,"selrtf",fragment);
     require(editor->editText()==u"BOLD tail"&&editor->editSelection()==std::make_pair(size_t(4),size_t(0)),"SelRTF replacement lost text or caret position");
     editor->editSelect(0,4);require(editor->get(runtime,"selbold").truth()&&editor->get(runtime,"selitalic").truth(),"SelRTF did not preserve attributes");
+    editor->editSelect(2,0);editor->set(runtime,"selrtf",Value::string(u"{\\rtf1\\qr fragment\\par\\qc next}"));
+    auto paste=gtkRichSnapshot(*editor);same(paste,gtkRtfParse(gtkRtfWrite(paste)));
+    editor->editSelect(2,1);require(editor->get(runtime,"selalignment").integral()==0,"Fragment paragraph formatting changed an existing paragraph's leading style");
+    editor->editSelect(11,1);require(editor->get(runtime,"selalignment").integral()==2,"Inserted new paragraph did not use fragment paragraph formatting");
+    editor->set(runtime,"text",Value::string(u"# tail"));editor->editSelect(0,1);editor->set(runtime,"selrtf",fragment);editor->editSelect(0,4);
     auto preserved=editor->get(runtime,"textrtf");auto selectedRange=editor->editSelection();changes=0;
     for(const auto& rtf:{u"bad",u"{\\rtf1 incomplete",u"{\\rtf1{\\pict xx}}"})error(rtf==Text(u"{\\rtf1{\\pict xx}}")?453:380,[&]{editor->set(runtime,"textrtf",Value::string(rtf));});
     error(380,[&]{editor->set(runtime,"selfontsize",Value::integer(0));});error(380,[&]{editor->set(runtime,"selbold",Value::null());});
