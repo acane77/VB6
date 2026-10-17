@@ -5,7 +5,7 @@ import {MACOS_RESOURCE_FILE} from '../../macos-native/src/resources.js';
 import {compileLinuxAOT} from './compiler.js';
 import {loadLinuxAOTRuntime} from './aot-runtime.js';
 import {inspectLinuxELF,linkLinuxELF,verifyLinuxAOTRuntime} from './elf.js';
-import {linuxOptions,linuxTarget,LINUX_LIMITS} from './target.js';
+import {linuxOptions,linuxTarget,linuxArtifactFilename,LINUX_LIMITS} from './target.js';
 import {LINUX_RUNTIME_LICENSE} from './runtime-license.js';
 const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true}),safePath=name=>typeof name==='string'&&encoder.encode(name).length<=4096&&!/[\\\x00-\x1f\x7f:]/.test(name)&&!name.split('/').some(p=>!p||p==='.'||p==='..'||encoder.encode(p).length>255);
 const json=value=>encoder.encode(JSON.stringify(value,null,2)+'\n');
@@ -62,7 +62,7 @@ export async function linkLinuxAOT(compiled,runtime,{resources={}}={}){
     runtime:{sha256:runtime.manifest.sha256,bytes:runtime.bytes.length,header:linked.templateHeader},files:hashes});
   if(Object.keys(files).length>LINUX_LIMITS.files)throw new Error('Too many Linux archive resources');
   const bytes=writeLinuxAppZip(files,entry),verification=await verifyLinuxAOTArchive(bytes,o);
-  return {bytes,executable,files,filename:o.name+'-linux-'+target.option+'.zip',options:o,report:{...buildReport,...verification}};
+  return {bytes,executable,files,filename:linuxArtifactFilename(o.name,target.option),options:o,report:{...buildReport,...verification}};
 }
 export async function exportLinuxAOT(project,runtime,options={},packaging={}){return linkLinuxAOT(compileLinuxAOT(project,options),runtime,packaging);}
 export async function exportLinuxApplication(project,options={},packaging={}){

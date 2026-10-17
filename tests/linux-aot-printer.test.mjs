@@ -36,3 +36,19 @@ test('A private declaration in another module does not hide the builtin Printer'
 test('A form control named Printer preserves normal control assignment semantics',()=>{
   const compiled=compileLinuxAOT({schema:1,name:'FormPrinter',startup:'F',modules:[{name:'F',kind:'form',code:'Sub Form_Load()\nSet Printer = Nothing\nEnd Sub',form:{type:'Form',name:'F',properties:{},controls:[{type:'CommandButton',name:'Printer',properties:{}}],menus:[]}}]});assert.equal(selector(compiled).length,0);
 });
+test('Unshadowed Printers(index) invokes the native collection default Item',()=>{
+  for(const architecture of ['x64','arm64']){
+    const compiled=compileLinuxAOT(project('Option Explicit\nSub Main()\nDim item As Object\nSet item = Printers(0)\nEnd Sub'),{architecture});
+    const calls=compiled.functions.flatMap(f=>f.ops).filter(op=>op.op==='call');
+    assert.ok(calls.some(op=>op.name==='get'&&compiled.metadata.names[op.args[0]]==='Printers'));
+    assert.ok(calls.some(op=>op.name==='call_value'));assert.ok(!calls.some(op=>op.name==='call'&&compiled.metadata.names[op.args[0]]==='Printers'));
+  }
+});
+for(const [label,code,modules]of [
+  ['local array','Sub Main()\nDim Printers(0 To 1) As Object, item As Object\nSet item = Printers(0)\nEnd Sub'],
+  ['parameter','Sub ReadPrinter(ByVal Printers As Object)\nDim item As Object\nSet item = Printers(0)\nEnd Sub\nSub Main()\nEnd Sub'],
+  ['module function','Function Printers(ByVal index As Long) As Object\nEnd Function\nSub Main()\nDim item As Object\nSet item = Printers(0)\nEnd Sub'],
+  ['public field','Sub Main()\nDim item As Object\nSet item = Printers(0)\nEnd Sub',[{name:'Globals',kind:'module',code:'Public Printers(0 To 1) As Object'}]]
+])test('Printers(index) respects a shadowing '+label,()=>{
+  const compiled=compileLinuxAOT(project(code,modules));assert.ok(!compiled.functions.some(f=>f.ops.some(op=>op.op==='call'&&op.name==='get'&&compiled.metadata.names[op.args[0]]==='Printers')));
+});

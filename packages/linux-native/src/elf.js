@@ -68,7 +68,7 @@ export function inspectLinuxELF(input,{requireProject=false,architecture}={}){
     const kind=u64(at),value=u64(at+8);if(kind===0){terminated=true;break;}
     if(kind===15||kind===29||kind===22)throw new Error('ELF runtime cannot use custom loader paths or text relocations');
     if(kind===24||kind===30&&(value&8)||kind===0x6ffffffb&&(value&1))bindNow=true;
-    if(kind===1){if(value>=dynamicStrings.size)throw new Error('Invalid ELF dependency');const name=string(dynamicStrings.offset+value,dynamicStrings.size-value);if(!libraries.test(name)||dependencies.includes(name))throw new Error('ELF runtime has an unsupported native dependency');dependencies.push(name);}
+    if(kind===1){if(value>=dynamicStrings.size)throw new Error('Invalid ELF dependency');const name=string(dynamicStrings.offset+value,dynamicStrings.size-value);if((!libraries.test(name)&&name!==interpreter.split('/').at(-1))||dependencies.includes(name))throw new Error('ELF runtime has an unsupported native dependency: '+name);dependencies.push(name);}
   }
   if(!terminated||!bindNow||!dependencies.includes('libgtk-3.so.0'))throw new Error('ELF runtime requires GTK3 and immediate binding');
   const codeSegments=loads.filter(s=>s.flags&LINUX_CODE_FLAG),metadataSegments=loads.filter(s=>s.flags&LINUX_METADATA_FLAG),hasProject=codeSegments.length||metadataSegments.length;
@@ -110,7 +110,14 @@ export function linkLinuxELF(compiled,template,layout=inspectLinuxELF(template))
   const metadataBytes=encoder.encode(JSON.stringify(compiled.metadata));
   bounded(metadataBytes.length,1,LINUX_LIMITS.metadataBytes,'Linux metadata exceeds 8 MiB');
   bounded(compiled.section?.length,1,LINUX_LIMITS.codeBytes,'Linux AOT code exceeds 64 MiB');
-  const codeCapacity=align(compiled.section.length,PAGE),codeOffset=align(template.length,PAGE),codeAddress=align(Math.max(...layout.loads.map(s=>s.address+s.size)),PAGE),count=layout.programCount+2;
+  const loadEnd=Math.max(...layout.loads.map(s=>s.address+s.size)),headerLoad=layout.loads.find(s=>s.offset===0&&s.fileSize>=64);
+  if(target.option==='arm64'&&!headerLoad)throw new Error('ARM64 runtime requires a mapped ELF header');
+  // Keep appended ARM64 file/virtual offsets consistent with the ELF header
+  // mapping. QEMU's Linux-user loader derives AT_PHDR from load_addr + e_phoff.
+  // This also works with the kernel's PT_LOAD-based program-header lookup.
+  const addressBias=target.option==='arm64'?headerLoad.address:0;
+  const codeCapacity=align(compiled.section.length,PAGE),codeOffset=align(Math.max(template.length,target.option==='arm64'?loadEnd-addressBias:0),PAGE),
+    codeAddress=target.option==='arm64'?addressBias+codeOffset:align(loadEnd,PAGE),count=layout.programCount+2;
   const metadataOffset=codeOffset+codeCapacity,metadataAddress=codeAddress+codeCapacity,metadataPrefix=align(count*PHDR_SIZE,16),metadataCapacity=align(metadataPrefix+16+metadataBytes.length,PAGE);
   if(count>128||layout.sectionCount+2>4096)throw new Error('Linux project exceeds ELF table limits');
   const names=encoder.encode('.vb6code\0.vb6meta\0'),stringsOffset=metadataOffset+metadataCapacity,stringsSize=layout.shstr.size+names.length,sectionOffset=align(stringsOffset+stringsSize,8),sectionCount=layout.sectionCount+2,length=sectionOffset+sectionCount*SHDR_SIZE;

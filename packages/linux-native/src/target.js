@@ -26,6 +26,14 @@ export function linuxTarget(architecture='x64'){
   if(typeof key!=='string'||!Object.hasOwn(LINUX_TARGETS,key))throw new LinuxCompileError('Linux executable architecture must be x64 or arm64');
   return LINUX_TARGETS[key];
 }
+/** Download stems may be shortened without changing the executable/app name. */
+export function linuxArtifactFilename(name,architecture='x64',extension='.zip'){
+  const options=linuxOptions({name,architecture}),encoder=new TextEncoder();
+  if(typeof extension!=='string'||extension.length>32||!/^\.[a-z0-9]+(?:\.[a-z0-9]+)*$/.test(extension))throw new LinuxCompileError('Invalid Linux artifact extension');
+  const suffix='-linux-'+options.architecture+extension,budget=255-encoder.encode(suffix).length;let stem='',size=0;
+  for(const character of name){const bytes=encoder.encode(character).length;if(size+bytes>budget)break;stem+=character;size+=bytes;}
+  return stem+suffix;
+}
 export function linuxOptions(options={}){
   if(!options||typeof options!=='object'||Array.isArray(options))throw new TypeError('Linux options must be an object');
   const target=linuxTarget(options.architecture??options.arch??'x64'),toolkit=options.toolkit??'gtk3',optimization=Number(options.optimization??2);
@@ -33,7 +41,7 @@ export function linuxOptions(options={}){
   if(toolkit!=='gtk3')throw new LinuxCompileError('Linux executable export currently requires GTK3');
   if(!Number.isInteger(optimization)||optimization<0||optimization>3)throw new LinuxCompileError('optimization must be 0, 1, 2 or 3');
   const name=options.name??'Application';
-  if(typeof name!=='string'||!name.length||name.length>100||new TextEncoder().encode(name).length>255||name==='.'||name==='..'||/[\x00-\x1f\x7f/\\:]/.test(name)||name.startsWith('-'))throw new LinuxCompileError('Invalid Linux application name');
+  if(typeof name!=='string'||!name.length||name.length>100||new TextEncoder().encode(name).length>255||new TextDecoder().decode(new TextEncoder().encode(name))!==name||name==='.'||name==='..'||/[\x00-\x1f\x7f/\\:]/.test(name)||name.startsWith('-'))throw new LinuxCompileError('Invalid Linux application name');
   const maxArrayElements=options.maxArrayElements??16777216,maxCallDepth=options.maxCallDepth??512;
   if(!Number.isSafeInteger(maxArrayElements)||maxArrayElements<1||maxArrayElements>67108864)throw new LinuxCompileError('maxArrayElements must be between 1 and 67108864');
   if(!Number.isSafeInteger(maxCallDepth)||maxCallDepth<1||maxCallDepth>4096)throw new LinuxCompileError('maxCallDepth must be between 1 and 4096');

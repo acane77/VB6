@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {compileLinuxAOT,linuxOptions,LINUX_TARGET,LINUX_TARGETS,linuxTarget,linkLinuxAOT,verifyLinuxAOTArchive} from '../packages/linux-native/src/index.js';
+import {compileLinuxAOT,linuxOptions,LINUX_TARGET,LINUX_TARGETS,linuxTarget,linuxArtifactFilename,linkLinuxAOT,verifyLinuxAOTArchive} from '../packages/linux-native/src/index.js';
 import {inspectLinuxELF,createLinuxAOTRuntimeManifest,verifyLinuxAOTRuntime} from '../packages/linux-native/src/elf.js';
 import {emitLinuxAOTFunctions,linkLinuxARM64AOT,LinuxARM64AOTAssembler} from '../packages/linux-native/src/aot-emitter.js';
 import {AOTFunction} from '../packages/macos-native/src/aot-emitter.js';
@@ -32,9 +32,19 @@ test('ARM64 ELF links immutable project mappings at 64 KiB boundaries and verifi
   assert.equal(new DataView(result.executable.buffer).getUint16(18,true),183);assert.equal(result.filename,'LinuxARM64-linux-arm64.zip');
   assert.equal(layout.image.architecture,'arm64');assert.equal(layout.image.callingConvention,'aapcs64');assert.equal(layout.image.pageBytes,65536);
   for(const segment of [layout.code,layout.metadata]){assert.equal(segment.address%65536,0);assert.equal(segment.offset%65536,0);assert.equal(segment.alignment,65536);}
+  assert.equal(layout.phdr.address,layout.programOffset,'AT_PHDR must agree with load_addr + e_phoff under QEMU user execution');
   assert.deepEqual([...layout.symbols],[...inspectLinuxELF(runtimes.arm64.bytes).symbols]);
   const verified=await verifyLinuxAOTArchive(result.bytes,result.options);assert.equal(verified.machine,183);assert.equal(verified.runtimeProvenanceVerified,true);assert.equal(verified.callingConvention,'aapcs64');
   await assert.rejects(()=>verifyLinuxAOTArchive(result.bytes,{name:project.name,architecture:'x64'}),/manifest/);
+});
+test('UTF-8 download filenames fit Linux limits while preserving full application names',async()=>{
+  const name='日'.repeat(85);
+  for(const architecture of ['x64','arm64'])for(const extension of ['.zip','.tar.gz']){
+    const filename=linuxArtifactFilename(name,architecture,extension);assert.ok(new TextEncoder().encode(filename).length<=255);assert.ok(filename.endsWith('-linux-'+architecture+extension));assert.ok(!filename.includes('\ufffd'));
+  }
+  const compiled=compileLinuxAOT({...project,name},{name,architecture:'arm64'}),result=await linkLinuxAOT(compiled,runtimes.arm64);
+  assert.equal(result.options.name,name);assert.ok(Object.hasOwn(result.files,name+'/bin/'+name));assert.equal(result.filename,linuxArtifactFilename(name,'arm64'));
+  assert.throws(()=>linuxArtifactFilename('App','arm64','/outside'),/extension/);assert.throws(()=>linuxOptions({name:'broken\ud800'}),/name/);
 });
 test('Cross-architecture objects, manifests, interpreters and 4 KiB ARM64 mappings fail closed',async()=>{
   for(const [architecture,other] of [['x64','arm64'],['arm64','x64']]){

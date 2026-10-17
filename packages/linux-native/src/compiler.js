@@ -16,18 +16,26 @@ function linuxFailure(error){
 /** Printer selection is a Linux host operation. User declarations named
  * Printer keep ordinary VB6 Set assignment and normal scope resolution. */
 export class LinuxDirectLowering extends DirectLowering {
-  builtinPrinter(){
-    const named=value=>String(value?.name||'').toLowerCase()==='printer',p=this.procedure,m=this.module;
+  builtinName(key){
+    const named=value=>String(value?.name||'').toLowerCase()===key,p=this.procedure,m=this.module;
     if((p?.params||[]).some(named)||(p?.redimDeclarations||[]).some(named)||(p?.code||[]).some(ins=>(ins.decls||[]).some(named)))return false;
     if(p&&named(p)&&(p.kind==='function'||p.accessor==='get'))return false;
     if(m.declarations.some(named)||[...m.procedures.values()].some(named))return false;
-    if([...(m.form?.controls||[]),...(m.form?.menus||[])].some(named)||this.program.modules.has('printer'))return false;
+    if([...(m.form?.controls||[]),...(m.form?.menus||[])].some(named)||this.program.modules.has(key))return false;
     return ![...this.program.modules.values()].some(module=>module.kind==='module'&&(
       module.declarations.some(declaration=>named(declaration)&&declaration.scope!=='private')||
       [...module.procedures.values()].some(procedure=>named(procedure)&&procedure.scope!=='private')));
   }
+  expressionInner(node){
+    // The shared host builtin returns the collection without arguments. Its
+    // indexed VB6 syntax invokes that collection's default Item member.
+    if(node?.kind==='call'&&node.callee?.kind==='id'&&String(node.callee.name).toLowerCase()==='printers'&&node.args.length&&this.builtinName('printers')){
+      const printers=this.f.call('get',this.n('Printers'));return this.f.call('call_value',printers,this.arguments(node.args));
+    }
+    return super.expressionInner(node);
+  }
   instructionCode(ins,index){
-    if(ins.op==='assign'&&ins.objectSet&&ins.target?.kind==='id'&&String(ins.target.name).toLowerCase()==='printer'&&this.builtinPrinter()){
+    if(ins.op==='assign'&&ins.objectSet&&ins.target?.kind==='id'&&String(ins.target.name).toLowerCase()==='printer'&&this.builtinName('printer')){
       this.instruction=ins;this.usedOps.add(ins.op);
       const printer=this.f.call('get',this.n('Printer')),args=this.f.call('args'),value=this.expression(ins.expr);
       this.f.call('arg_value',args,value,this.n(''));
