@@ -7,12 +7,12 @@ import {createInterface} from 'node:readline';
 import {pathToFileURL} from 'node:url';
 
 /** Execute the real registration helper in separate OS processes, headlessly. */
-export async function qualifyLinuxInstances(executable){
+export async function qualifyLinuxInstances(executable,{prefix=[]}={}){
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'vb6-instance-contracts-'));
   const processes=new Set();
   const environment={...process.env};delete environment.DISPLAY;delete environment.WAYLAND_DISPLAY;
   async function start(file=executable,args=[],env=environment){
-    const child=spawn(file,args,{stdio:['pipe','pipe','pipe'],env});processes.add(child);
+    const child=spawn(prefix[0]||file,[...prefix.slice(1),...(prefix.length?[file]:[]),...args],{stdio:['pipe','pipe','pipe'],env});processes.add(child);
     let stderr='';child.stderr.setEncoding('utf8');child.stderr.on('data',text=>stderr+=text);
     const lines=createInterface({input:child.stdout});const waiting=[],buffer=[];
     const completion=new Promise((resolve,reject)=>{
