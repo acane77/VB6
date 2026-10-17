@@ -31,7 +31,7 @@ export function linuxArtifactFilename(name,architecture='x64',extension='.zip'){
   const options=linuxOptions({name,architecture}),encoder=new TextEncoder();
   if(typeof extension!=='string'||extension.length>32||!/^\.[a-z0-9]+(?:\.[a-z0-9]+)*$/.test(extension))throw new LinuxCompileError('Invalid Linux artifact extension');
   const suffix='-linux-'+options.architecture+extension,budget=255-encoder.encode(suffix).length;let stem='',size=0;
-  for(const character of name){const bytes=encoder.encode(character).length;if(size+bytes>budget)break;stem+=character;size+=bytes;}
+  for(const character of options.name){const bytes=encoder.encode(character).length;if(size+bytes>budget)break;stem+=character;size+=bytes;}
   return stem+suffix;
 }
 export function linuxOptions(options={}){
