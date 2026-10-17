@@ -269,6 +269,8 @@ npm run build:update-ide-artifacts
 
 Embedding requires passing exact-runtime machine-code execution, GTK signals, RTF, printer, previous-instance, resource, lifetime, large-project, and O0–O3 evidence. Cross builds require an explicit ARM64 sysroot, cross compiler, and QEMU; proof records emulated execution distinctly from native execution. Emulated ARM64 qualification executes the same conformance binary with 4/16/64 KiB QEMU page settings. No bootstrap or unverified payload may be embedded. Source provenance covers the portable runtime, shared AOT helpers, GTK host, Linux loader, and ABI definition. Normal package/IDE builds validate both architectures and reject missing or stale payloads.
 
+An extracted cross-compilation sysroot also needs the target GdkPixbuf image-loader cache, ICO/SVG loader modules, and the shared MIME cache normally created by package installation. The qualification tool validates these prerequisites and the loaders' ELF architecture before execution. If they are missing, its diagnostic gives the target `gdk-pixbuf-query-loaders` command to run under QEMU and the `update-mime-database` step; the report records both cache hashes.
+
 ## Primary references
 
 - [GTK compilation and pkg-config](https://docs.gtk.org/gtk3/compiling.html)
