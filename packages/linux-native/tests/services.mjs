@@ -2,6 +2,10 @@
 export const linuxPrinterProject={schema:1,name:'LinuxPrinterAOT',startup:'Sub Main',modules:[{name:'Entry',kind:'module',code:`Option Explicit
 Public Sub Main()
   Dim caught As Long, count As Long, selected As Object, item As Object
+  Screen.MousePointer = 11
+  Debug.Assert Screen.MousePointer = 11
+  Screen.MousePointer = 0
+  Debug.Assert Screen.MousePointer = 0
   Debug.Assert Printers.Count = 2
   Debug.Assert Printer.DeviceName = "VB6_B"
   Debug.Print "LINUX_PRINTERS_DEFAULT_OK"

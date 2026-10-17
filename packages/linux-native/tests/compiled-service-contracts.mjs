@@ -42,7 +42,7 @@ export async function qualifyLinuxCompiledServices(runtime,{architecture='x64',p
     held.child.kill('SIGKILL');assert.equal((await held.completion).signal,'SIGKILL');
     const restart=await execute(instance).completion;assert.equal(restart.code,0,JSON.stringify(restart));assert.equal(restart.stderr,'');assert.match(restart.stdout,/INSTANCE_FIRST/);
     assert.deepEqual(service.errors,[]);assert.equal(service.documents.length,0);
-    return {passed:true,architecture,artifacts,checks:['compiled-printers-collection','compiled-set-printer-type-errors','compiled-set-printer-selection','compiled-printer-settings','compiled-instance-startup-before-access','compiled-instance-crash-restart']};
+    return {passed:true,architecture,artifacts,checks:['compiled-headless-screen-cursor','compiled-printers-collection','compiled-set-printer-type-errors','compiled-set-printer-selection','compiled-printer-settings','compiled-instance-startup-before-access','compiled-instance-crash-restart']};
   }finally{for(const child of children)child.kill('SIGKILL');await service.close();await fs.rm(directory,{recursive:true,force:true});}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href){

@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <unistd.h>
+#include "gtk-cursor-contracts.hpp"
+#include "gtk-dialog-contracts.hpp"
 
 using namespace vb6;
 namespace {
@@ -105,6 +107,7 @@ int main(int argc,char** argv){
     const std::string mode=argc>1?argv[1]:"--app-probe";
     if(mode=="--app-probe"||mode=="--exec")probe(mode=="--exec");
     else if(mode=="--empty"||mode=="--printers"||mode=="--print")printers(mode!="--empty",mode=="--print");
+    else if(mode=="--dialogs"){Runtime runtime(makeNativeHost());auto& host=static_cast<GtkHost&>(*runtime.host);qualifyGtkScreenCursors(runtime,host);qualifyGtkPrinterDialogs(runtime,host);}
     else throw std::runtime_error("Unknown native service fixture mode");
     return 0;
   }catch(const Error& found){std::cerr<<"Native service VB error "<<found.number<<": "<<found.what()<<'\n';return 1;}

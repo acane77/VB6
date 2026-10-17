@@ -82,6 +82,14 @@ export async function qualifyLinuxPrinters(executable,{prefix=[],printPrefix=['x
       }catch(error){throw new Error(error.message+'\nIPP job requests: '+JSON.stringify(service.requests.filter(value=>[2,5,6].includes(value.operation)).map(value=>({operation:value.operation,rejected:!!value.rejected,documentBytes:value.document.length}))),{cause:error});}
       finally{await service.close();}
     }
+    const dialogs=await createMockCups();
+    try{
+      const stdout=await nativeCase(executable,'--dialogs',{service:dialogs,home,prefix:[...printPrefix,...prefix]});
+      assert.match(stdout,/LINUX_SCREEN_CURSORS_OK/);assert.match(stdout,/LINUX_GTK_PRINTER_DIALOGS_OK/);assert.deepEqual(dialogs.errors,[]);
+      assert.equal(dialogs.documents.length,0,'The settings dialog submitted an empty print document');
+      assert.equal(dialogs.requests.filter(value=>[2,5,6].includes(value.operation)).length,0,'The settings dialog created a CUPS job');
+      results.push({name:'printer-dialog-accept-cancel-and-screen-cursors',requests:dialogs.requests.length});
+    }finally{await dialogs.close();}
     return {passed:true,cases:results};
   }finally{await fs.rm(home,{recursive:true,force:true});}
 }
