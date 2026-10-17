@@ -2,6 +2,7 @@
 #include "gtk.hpp"
 #include "gtk-instance.hpp"
 #include "gtk-services.hpp"
+#include "gtk-printers.hpp"
 #include <cerrno>
 #include <cstring>
 #include <spawn.h>
@@ -15,6 +16,38 @@ struct GtkApplicationInstance final:Object {
   LinuxApplicationInstance registration;
   std::string className()const override{return "ApplicationInstance";}
 };
+struct GtkScreenState final:Object{int mousePointer=0;};
+GtkScreenState& screenState(GtkHost& host){
+  auto& value=host.systemObjects["__screen-state"];
+  if(!value)value=std::make_shared<GtkScreenState>();
+  return *std::static_pointer_cast<GtkScreenState>(value);
+}
+struct CursorState {
+  GdkCursor* original;
+  explicit CursorState(GdkWindow* window):original(gdk_window_get_cursor(window)){if(original)g_object_ref(original);}
+  ~CursorState(){if(original)g_object_unref(original);}
+};
+void applyCursorWindow(GtkControl& fallback,GdkWindow* window,int global){
+  if(!window||gdk_window_is_destroyed(window))return;
+  gpointer widget=nullptr;gdk_window_get_user_data(window,&widget);
+  auto owner=widget&&GTK_IS_WIDGET(widget)?fallback.host->controlForWidget(GTK_WIDGET(widget)):nullptr;
+  if(!owner)for(auto& form:fallback.host->forms)if(widget==form.second->window){owner=form.second->surface;break;}
+  auto& control=owner?*owner:fallback;const auto pointer=global?global:int(control.number("mousepointer"));
+  constexpr const char* key="vb6-original-cursor";
+  auto* saved=static_cast<CursorState*>(g_object_get_data(G_OBJECT(window),key));
+  if(!pointer){if(saved){gdk_window_set_cursor(window,saved->original);g_object_set_data(G_OBJECT(window),key,nullptr);}}
+  else {
+    if(!saved)g_object_set_data_full(G_OBJECT(window),key,new CursorState(window),+[](gpointer data){delete static_cast<CursorState*>(data);});
+    static const char* names[]={"default","default","crosshair","text","icon","move","nesw-resize","ns-resize","nwse-resize","ew-resize","up-arrow","wait","not-allowed","progress","help","move"};
+    GdkCursor* cursor=nullptr;
+    if(pointer==99){auto value=control.property("mouseicon",Value::object(nullptr));auto picture=value.type==Type::Object?std::dynamic_pointer_cast<GtkPicture>(std::get<ObjectPtr>(value.payload)):nullptr;if(picture&&picture->pixels)cursor=gdk_cursor_new_from_pixbuf(gdk_window_get_display(window),picture->pixels,picture->hotspotX,picture->hotspotY);}
+    if(!cursor)cursor=gdk_cursor_new_from_name(gdk_window_get_display(window),pointer>=0&&pointer<=15?names[pointer]:"default");
+    gdk_window_set_cursor(window,cursor);if(cursor)g_object_unref(cursor);
+  }
+  auto* children=gdk_window_get_children(window);
+  for(auto* child=children;child;child=child->next)applyCursorWindow(control,GDK_WINDOW(child->data),global);
+  g_list_free(children);
+}
 struct Dialog {
   GtkWidget* widget;
   explicit Dialog(GtkWidget* value):widget(value){g_object_ref_sink(widget);}
@@ -31,7 +64,7 @@ struct HostObject final:Object {
   std::string className()const override{return kind;}
   std::vector<Value> enumerate(Runtime&)override{check();if(kind!="forms")fail(451);std::vector<Value> values;for(auto& entry:host->forms)values.push_back(Value::object(entry.second->owner));return values;}
   Value get(Runtime& rt,const std::string& raw)override{
-    check();auto name=lower(raw);host->ensureApplication();
+    check();auto name=lower(raw);if(kind=="screen"&&name=="mousepointer")return Value::integer(screenState(*host).mousePointer,Type::Integer);host->ensureApplication();
     if(kind=="forms"&&name=="count")return Value::integer(host->forms.size());
     if(kind=="screen") {
       if(name=="width"||name=="height"){auto* display=gdk_display_get_default();auto* monitor=gdk_display_get_primary_monitor(display);if(!monitor)monitor=gdk_display_get_monitor(display,0);GdkRectangle rect{0,0,0,0};if(monitor)gdk_monitor_get_geometry(monitor,&rect);return Value::integer((name=="width"?rect.width:rect.height)*15);}
@@ -40,13 +73,19 @@ struct HostObject final:Object {
       if(name=="activecontrol"){auto* window=host->activeWindow();return Value::object(window?host->controlForWidget(gtk_window_get_focus(window)):nullptr);}
       if(name=="fontcount")return Value::integer(fonts().size());
       if(name=="fonts"){std::vector<Value> values;for(auto& font:fonts())values.push_back(Value::string(font));return arrayValue(values,0,"string");}
-      if(name=="mousepointer")return Value::integer(0,Type::Integer);
     }
     return Object::get(rt,raw);
   }
-  void set(Runtime& rt,const std::string& raw,Value value,bool)override{check();auto name=lower(raw);if(kind=="screen"&&name=="mousepointer"){for(auto& entry:host->forms)entry.second->surface->set(rt,"mousepointer",value);return;}fail(438);}
+  void set(Runtime&,const std::string& raw,Value value,bool)override{
+    check();auto name=lower(raw);
+    if(kind=="screen"&&name=="mousepointer"){
+      auto pointer=value.integral();if(pointer<0||pointer>15)fail(380,"Screen.MousePointer requires a standard cursor from 0 through 15");
+      screenState(*host).mousePointer=int(pointer);for(auto& entry:host->forms)gtkApplyMousePointer(*entry.second->surface);return;
+    }
+    fail(438);
+  }
   Value invoke(Runtime& rt,const std::string& raw,Args args)override{
-    check();auto name=lower(raw);host->ensureApplication();
+    check();auto name=lower(raw);if(kind=="screen"&&name=="mousepointer"&&args.empty())return get(rt,name);host->ensureApplication();
     if(kind=="forms"&&(name.empty()||name=="item")){if(args.size()!=1)fail(450);auto values=enumerate(rt);auto index=args[0].value.integral();if(index<0||size_t(index)>=values.size())fail(9);return values[size_t(index)];}
     if(kind=="screen"&&name=="fonts"){if(args.size()!=1)fail(450);auto values=fonts();auto index=args[0].value.integral();if(index<0||size_t(index)>=values.size())fail(9);return Value::string(values[size_t(index)]);}
     if(kind=="clipboard") {
@@ -74,6 +113,10 @@ struct Settings {
   void save(){std::error_code error;std::filesystem::create_directories(path.parent_path(),error);if(error)fail(75,error.message());GError* failure=nullptr;if(!g_key_file_save_to_file(keyfile,path.c_str(),&failure)){auto message=std::string(failure?failure->message:"Settings write failed");if(failure)g_error_free(failure);fail(75,message);}}
 };
 std::string settingPart(const Value& value){auto name=toUTF8(changeCase(value.string(),false));if(name.empty()||name.find_first_of("\r\n[]=")!=std::string::npos||name.find('\0')!=std::string::npos)fail(5,"Invalid settings name");return name;}
+}
+void gtkApplyMousePointer(GtkControl& control){
+  if(control.disposed||control.hostLife.expired()||!control.view||!gtk_widget_get_realized(control.view))return;
+  applyCursorWindow(control,gtk_widget_get_window(control.view),screenState(*control.host).mousePointer);
 }
 void gtkRegisterApplication(GtkHost& host){
   if(host.systemObjects.count("__application-instance"))return;
@@ -141,10 +184,7 @@ Value GtkHost::dialog(GtkControl& control,const std::string& name) {
     font=gtk_font_chooser_get_font_desc(GTK_FONT_CHOOSER(dialog.widget));control.properties["fontname"]=Value::string(fromUTF8(pango_font_description_get_family(font)));control.properties["fontsize"]=Value::real(double(pango_font_description_get_size(font))/PANGO_SCALE);control.properties["fontbold"]=Value::boolean(pango_font_description_get_weight(font)>=PANGO_WEIGHT_BOLD);control.properties["fontitalic"]=Value::boolean(pango_font_description_get_style(font)!=PANGO_STYLE_NORMAL);pango_font_description_free(font);return {};
   }
   if(name=="showprinter") {
-    auto* operation=gtk_print_operation_new();gtk_print_operation_set_n_pages(operation,1);
-    // The common dialog chooses settings; it must not submit an empty print job.
-    g_signal_connect(operation,"begin-print",G_CALLBACK(+[](GtkPrintOperation* operation,GtkPrintContext*,gpointer){gtk_print_operation_cancel(operation);}),nullptr);
-    GError* error=nullptr;auto result=gtk_print_operation_run(operation,GTK_PRINT_OPERATION_ACTION_PRINT_DIALOG,activeWindow(),&error);g_object_unref(operation);check();if(error){auto text=std::string(error->message);g_error_free(error);fail(482,text);}if(result==GTK_PRINT_OPERATION_RESULT_CANCEL&&control.flag("cancelerror"))fail(32755);return {};
+    gtkShowPrinterDialog(*this,control);return {};
   }
   fail(438);
 }

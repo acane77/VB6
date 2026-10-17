@@ -1,6 +1,7 @@
 // Cairo/Pango/GdkPixbuf rendering and native GTK printing. MIT.
 #include "gtk.hpp"
 #include "gtk-printers.hpp"
+#include <gtk/gtkunixprint.h>
 #include <cups/cups.h>
 #include <cups/pwg.h>
 #include <cstdlib>
@@ -129,7 +130,7 @@ struct GtkPrinterObject final:Object {
     if(name=="drivername")return Value::string(fromUTF8(destination.name.empty()?"":destination.option("printer-make-and-model","CUPS")));
     if(name=="port")return Value::string(fromUTF8(destination.option("device-uri",destination.option("printer-uri-supported"))));
     if(name=="width"||name=="height")return Value::real((name=="width"?gtk_page_setup_get_paper_width(setup,GTK_UNIT_POINTS):gtk_page_setup_get_paper_height(setup,GTK_UNIT_POINTS))*20);
-    if(name=="orientation")return Value::integer(gtk_page_setup_get_orientation(setup)==GTK_PAGE_ORIENTATION_LANDSCAPE?2:1,Type::Integer);
+    if(name=="orientation"){auto orientation=gtk_page_setup_get_orientation(setup);return Value::integer(orientation==GTK_PAGE_ORIENTATION_LANDSCAPE||orientation==GTK_PAGE_ORIENTATION_REVERSE_LANDSCAPE?2:1,Type::Integer);}
     if(name=="copies")return Value::integer(gtk_print_settings_get_n_copies(settings),Type::Integer);
     if(name=="duplex"){auto duplex=gtk_print_settings_get_duplex(settings);return Value::integer(duplex==GTK_PRINT_DUPLEX_VERTICAL?2:duplex==GTK_PRINT_DUPLEX_HORIZONTAL?3:1,Type::Integer);}
     if(name=="colormode")return Value::integer(gtk_print_settings_get_use_color(settings)?2:1,Type::Integer);
@@ -272,6 +273,42 @@ Value gtkPrinter(GtkHost& host,const std::string& name) {
   auto printer=std::make_shared<GtkPrinterObject>(host,std::move(selected),true);host.systemObjects[name]=printer;return Value::object(printer);
 }
 void gtkSetPrinter(GtkHost& host,Value printer){gtkPrinter(host,"printer").asObject()->invoke(*host.runtime,"__selectprinter",{Arg(std::move(printer))});}
+void gtkShowPrinterDialog(GtkHost& host,GtkControl& control){
+  auto printer=std::dynamic_pointer_cast<GtkPrinterObject>(gtkPrinter(host,"printer").asObject());
+  auto editable=[&]{printer->editable();if(printer->active())fail(482,"Finish or cancel the current document before changing printer settings");};
+  editable();printer->refreshDefault();
+  auto title=toUTF8(control.property("dialogtitle",Value::string(u"Printer")).string());
+  auto* widget=gtk_print_unix_dialog_new(title.c_str(),host.activeWindow());g_object_ref_sink(widget);
+  struct DialogGuard{GtkWidget* value;~DialogGuard(){gtk_widget_destroy(value);g_object_unref(value);}} guard{widget};
+  auto* dialog=GTK_PRINT_UNIX_DIALOG(widget);
+  gtk_print_unix_dialog_set_manual_capabilities(dialog,GtkPrintCapabilities(GTK_PRINT_CAPABILITY_COPIES|GTK_PRINT_CAPABILITY_COLLATE|GTK_PRINT_CAPABILITY_SCALE));
+  gtk_print_unix_dialog_set_embed_page_setup(dialog,TRUE);
+  // Give the dialog copies: cancelling must not mutate the selected Printer.
+  auto* initialSettings=gtk_print_settings_copy(printer->settings);auto* initialSetup=gtk_page_setup_copy(printer->setup);
+  gtk_print_unix_dialog_set_settings(dialog,initialSettings);gtk_print_unix_dialog_set_page_setup(dialog,initialSetup);
+  g_object_unref(initialSettings);g_object_unref(initialSetup);
+  if(host.runDialog(widget)!=GTK_RESPONSE_OK){if(control.flag("cancelerror"))fail(32755,"Dialog cancelled");return;}
+  editable();
+  auto* selected=gtk_print_unix_dialog_get_selected_printer(dialog);
+  if(!selected||gtk_printer_is_virtual(selected))fail(484,"Select an installed CUPS printer");
+  auto destination=gtkFindPrinterDestination(gtk_printer_get_name(selected));
+  auto* settings=gtk_print_unix_dialog_get_settings(dialog);
+  auto* setup=gtk_page_setup_copy(gtk_print_unix_dialog_get_page_setup(dialog));
+  struct SettingsGuard{GtkPrintSettings* settings;GtkPageSetup* setup;~SettingsGuard(){if(settings)g_object_unref(settings);if(setup)g_object_unref(setup);}} selectedSettings{settings,setup};
+  const auto copies=gtk_print_settings_get_n_copies(settings);const auto scale=gtk_print_settings_get_scale(settings);
+  if(copies<1||copies>32767||!std::isfinite(scale)||scale<=0||scale>400)fail(380,"Printer settings are outside the supported range");
+  gtk_print_settings_set_printer(settings,destination.queue.c_str());
+  gtk_print_settings_set_orientation(settings,gtk_page_setup_get_orientation(setup));
+  gtk_print_settings_set_paper_size(settings,gtk_page_setup_get_paper_size(setup));
+  const auto resolution=gtk_print_settings_get_resolution(settings);const auto quality=gtk_print_settings_get_quality(settings);
+  // GtkPrintUnixDialog only chooses settings. No GtkPrintJob is created here.
+  printer->destination=std::move(destination);g_object_unref(printer->settings);g_object_unref(printer->setup);
+  printer->settings=settings;printer->setup=setup;selectedSettings.settings=nullptr;selectedSettings.setup=nullptr;
+  printer->quality=resolution>0?resolution:quality==GTK_PRINT_QUALITY_DRAFT?-1:quality==GTK_PRINT_QUALITY_LOW?-2:quality==GTK_PRINT_QUALITY_HIGH?-4:-3;
+  printer->trackDefault=false;printer->identifyPaper();printer->size();
+  control.properties["copies"]=Value::integer(copies,Type::Integer);
+  control.properties["orientation"]=printer->get(*host.runtime,"orientation");
+}
 GtkDrawing gtkDrawing(GtkControl& control,std::string kind) {
   GtkDrawing command;command.kind=std::move(kind);command.color=int32_t(control.number("forecolor"));command.width=std::max(1.0,control.number("drawwidth",1));command.style=int(control.number("drawstyle"));command.fontName=control.property("fontname",Value::string(u"Sans")).string();command.fontSize=control.number("fontsize",8.25);command.bold=control.flag("fontbold");command.italic=control.flag("fontitalic");command.underline=control.flag("fontunderline");command.strikeout=control.flag("fontstrikethru");return command;
 }

@@ -5,6 +5,7 @@
 #include <vector>
 namespace vb6 {
 struct GtkHost;
+struct GtkControl;
 struct Value;
 struct GtkPrinterDestination {
   std::string name,queue,instance;
@@ -19,4 +20,5 @@ GtkPrinterDestination gtkFindPrinterDestination(const std::string&);
 GtkPrinterDestination gtkPrinterDetails(GtkPrinterDestination);
 void gtkSubmitPrintFile(const GtkPrinterDestination&,const std::string&,const std::string&,const std::map<std::string,std::string>&);
 void gtkSetPrinter(GtkHost&,Value);
+void gtkShowPrinterDialog(GtkHost&,GtkControl&);
 }

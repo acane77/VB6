@@ -1,6 +1,7 @@
 // GTK widgets and the VB control property/method boundary. MIT.
 #include "gtk.hpp"
 #include "gtk-richtext.hpp"
+#include "gtk-services.hpp"
 #include <fstream>
 
 namespace vb6 {
@@ -190,6 +191,7 @@ void GtkControl::initialize() {
   if(type=="MSChart")resizeGrid(size_t(number("rowcount",5)),size_t(number("columncount",1)));
   if(content||type=="Image"||type=="Line"||type=="Shape"||type=="MSChart")gtkSignal(widget,"draw",G_CALLBACK(+[](GtkWidget*,cairo_t* cr,gpointer data)->gboolean {gtkEvent(data,[&](GtkControl& c){gtkDraw(c,cr);});return FALSE;}),self());
   gtkConnectInput(*this);
+  gtkSignal(view,"realize",G_CALLBACK(+[](GtkWidget*,gpointer data){gtkEvent(data,[](GtkControl& c){gtkApplyMousePointer(c);});}),self());
   auto initial=property("list");if(initial.type==Type::Array)for(auto& value:initial.asArray()->values)list.push_back(value.string());itemData.resize(list.size());
   if(type=="DriveListBox"||type=="DirListBox"||type=="FileListBox")reloadFiles();
   refresh();applyFrame();applyFont();
@@ -226,9 +228,7 @@ void GtkControl::refresh() {
   if(properties.count("forecolor")){auto color=gtkColor(number("forecolor"));gtk_widget_override_color(widget,GTK_STATE_FLAG_NORMAL,&color);}
   if(properties.count("backcolor")){auto color=gtkColor(number("backcolor"));gtk_widget_override_background_color(widget,GTK_STATE_FLAG_NORMAL,&color);}
   if(GTK_IS_COMBO_BOX(widget)||GTK_IS_TREE_VIEW(widget))reloadList();
-  auto pointer=int(number("mousepointer"));auto* window=gtk_widget_get_window(view);if(window){const char* cursor=pointer==2?"crosshair":pointer==3?"text":pointer==9?"move":pointer==11?"wait":pointer==10?"not-allowed":pointer==15?"pointer":"default";GdkCursor* value=nullptr;
-    if(pointer==99){auto image=property("mouseicon",Value::object(nullptr));auto picture=image.type==Type::Object?std::dynamic_pointer_cast<GtkPicture>(std::get<ObjectPtr>(image.payload)):nullptr;if(picture&&picture->pixels)value=gdk_cursor_new_from_pixbuf(gdk_window_get_display(window),picture->pixels,picture->hotspotX,picture->hotspotY);}
-    if(!value)value=gdk_cursor_new_from_name(gdk_window_get_display(window),cursor);gdk_window_set_cursor(window,value);if(value)g_object_unref(value);}
+  gtkApplyMousePointer(*this);
   gtk_widget_queue_draw(view);
 }
 void GtkControl::dispose() {
