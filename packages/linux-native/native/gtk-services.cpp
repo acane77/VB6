@@ -1,5 +1,7 @@
 // GTK dialogs, screen/clipboard, POSIX launch and XDG persistent settings. MIT.
 #include "gtk.hpp"
+#include "gtk-instance.hpp"
+#include "gtk-services.hpp"
 #include <cerrno>
 #include <cstring>
 #include <spawn.h>
@@ -9,6 +11,10 @@ extern char** environ;
 
 namespace vb6 {
 namespace {
+struct GtkApplicationInstance final:Object {
+  LinuxApplicationInstance registration;
+  std::string className()const override{return "ApplicationInstance";}
+};
 struct Dialog {
   GtkWidget* widget;
   explicit Dialog(GtkWidget* value):widget(value){g_object_ref_sink(widget);}
@@ -69,6 +75,11 @@ struct Settings {
 };
 std::string settingPart(const Value& value){auto name=toUTF8(changeCase(value.string(),false));if(name.empty()||name.find_first_of("\r\n[]=")!=std::string::npos||name.find('\0')!=std::string::npos)fail(5,"Invalid settings name");return name;}
 }
+void gtkRegisterApplication(GtkHost& host){
+  if(host.systemObjects.count("__application-instance"))return;
+  try{host.systemObjects["__application-instance"]=std::make_shared<GtkApplicationInstance>();}
+  catch(const std::exception& error){fail(75,error.what());}
+}
 Value gtkHostObject(GtkHost& host,const std::string& name){return Value::object(std::make_shared<HostObject>(host,name));}
 Value GtkHost::createObject(Runtime&,const std::string& raw) {
   auto name=lower(raw);if(name=="screen"||name=="clipboard"||name=="forms")return gtkHostObject(*this,name);
@@ -78,7 +89,11 @@ Value GtkHost::createObject(Runtime&,const std::string& raw) {
 }
 Value GtkHost::appProperty(Runtime& rt,const std::string& raw) {
   auto name=lower(raw);if(name=="taskvisible")return Value::boolean(true);if(name=="startmode")return Value::integer(0,Type::Integer);if(name=="nonmodalallowed")return Value::boolean(true);if(name=="hinstance")return api(rt,"kernel32.GetModuleHandle",{Arg(Value::integer(0))});
-  if(name=="previnstance")fail(453,"App.PrevInstance has no registered application identifier on Linux");fail(438);
+  if(name=="previnstance"){
+    gtkRegisterApplication(*this);
+    return Value::boolean(std::static_pointer_cast<GtkApplicationInstance>(systemObjects.at("__application-instance"))->registration.previous());
+  }
+  fail(438);
 }
 int GtkHost::runDialog(GtkWidget* dialog) {
   dialogs.push_back(dialog);int result=gtk_dialog_run(GTK_DIALOG(dialog));dialogs.erase(std::find(dialogs.begin(),dialogs.end(),dialog));check();return result;
