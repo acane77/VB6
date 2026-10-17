@@ -200,7 +200,15 @@ void commit(GtkControl& c,const GtkRtfDocument& document,size_t start,size_t len
   // construction finish before replacing the buffer displayed by the control.
   auto previous=c.richText;
   {
-    GtkEventSuppression suppression(c);c.richText=prepared;gtk_text_view_set_buffer(GTK_TEXT_VIEW(c.widget),prepared->buffer);
+    GtkEventSuppression suppression(c);
+    auto* view=GTK_TEXT_VIEW(c.widget);auto wrap=gtk_text_view_get_wrap_mode(view);
+    // GTK 3.24 can retain one_display_cache for an unvalidated old line during
+    // set_buffer; a subsequent collapsed selection then walks that stale line.
+    // Invalidate the old layout through public APIs before the atomic swap.
+    // No event loop or VB handler runs between these two wrap-mode updates.
+    gtk_text_view_set_wrap_mode(view,wrap==GTK_WRAP_NONE?GTK_WRAP_WORD_CHAR:GTK_WRAP_NONE);
+    gtk_text_view_set_wrap_mode(view,wrap);
+    c.richText=prepared;gtk_text_view_set_buffer(view,prepared->buffer);
     nativeSelection(*prepared,scalarOffset(document.text,start),scalarOffset(document.text,start+length));
     prepared->typing=insertionStyle(c,prepared->selection.first);prepared->typingOverride=false;
     c.properties["text"]=Value::string(document.text);gtk_text_buffer_set_modified(prepared->buffer,changed||gtk_text_buffer_get_modified(previous->buffer));
@@ -295,7 +303,7 @@ void setAttribute(GtkControl& c,const std::string& name,Value value,int index=-1
   }
   next.emptyStyle=original.emptyStyle;if(last==original.text.size())formatted(next.emptyStyle,name,value,index);
   if(equal(original,next))return;
-  commit(c,next,range.first,range.second,true);if(c.disposed)return;c.richText->typing=typing;c.richText->typingOverride=true;
+  commit(c,next,range.first,range.second,true,false);c.richText->typing=typing;c.richText->typingOverride=true;c.event("change");
 }
 void drawBullets(GtkControl& c,cairo_t* context) {
   auto& state=rich(c);GtkTextIter iter;gtk_text_buffer_get_start_iter(state.buffer,&iter);
@@ -373,7 +381,7 @@ void gtkRichSet(GtkControl& c,const std::string& name,Value value) {
   }
   setAttribute(c,name,std::move(value));
 }
-bool gtkRichMethod(const std::string& name) noexcept {return name=="loadfile"||name=="savefile"||name=="seltabs"||name=="find"||name=="getlinenumber"||name=="span";}
+bool gtkRichMethod(const std::string& name) noexcept {return name=="loadfile"||name=="savefile"||name=="seltabs"||name=="find"||name=="getlinenumber";}
 Value gtkRichCall(GtkControl& c,const std::string& name,Args args,bool put) {
   rich(c);
   if(name=="seltabs") {

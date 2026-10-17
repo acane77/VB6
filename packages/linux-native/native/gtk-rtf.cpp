@@ -83,6 +83,7 @@ public:
       token.kind=Token::Bytes;
       while(at<input.size()&&input[at]!='{'&&input[at]!='}'&&input[at]!='\\'&&input[at]!='\r'&&input[at]!='\n')++at;
       token.bytes=std::string_view(input).substr(token.first,at-token.first);
+      if(token.bytes.find('\0')!=std::string_view::npos)invalid("embedded NUL outside binary destination");
     }else {
       if(at==input.size())invalid("trailing backslash");
       ch=input[at++];
@@ -188,6 +189,7 @@ class Reader {
     if(state.font<0&&defaultFont>=0)selectFont(state,defaultFont);
     if(state.lineSpacing!=0&&!(state.lineSpacing==240&&state.lineMultiple==1))unsupported("sl (non-default line spacing)");
     if(state.listMarker&&!state.style.paragraph.bullet)unsupported("pntext (list has no supported bullet definition)");
+    state.listMarker=false;
     paragraph=state.style.paragraph;
     auto append=[&](const Text& part) {
       if(part.empty())return;
@@ -313,7 +315,7 @@ class Reader {
     if(visibleDestinations.count(name))unsupported(name);
     static const std::set<std::string> metadataDestinations={"info","generator","xmlnstbl","revtbl","rsidtbl","filetbl","themedata","colorschememapping","latentstyles","datastore","docvar","bkmkstart","bkmkend","atnauthor","atnid"};
     if(state.first&&metadataDestinations.count(name)) {state.preserve=state.destination==Destination::Body;state.destination=Destination::Skip;return;}
-    if(state.optional&&name!="ud"&&name!="cs"&&name!="pn"&&name!="falt"&&name!="panose") {
+    if(state.optional&&state.first&&name!="ud"&&name!="cs"&&name!="pn"&&name!="falt"&&name!="panose") {
       // Unknown optional groups may describe future visible formatting. Diagnose
       // them instead of silently deleting bytes from a subsequently saved file.
       unsupported(name+" (optional destination)");
@@ -445,7 +447,7 @@ void encodedText(std::string& output,const Text& text,bool font=false) {
   for(auto ch:text) {
     if(ch==u'\\'||ch==u'{'||ch==u'}'){output+='\\';output+=char(ch);}
     else if(ch==u'\n')output+="\\par\n";
-    else if(ch==u'\r'){} // Plain-text line endings are normalized before writing.
+    else if(ch==u'\r')output+="\\u13?";
     else if(ch==u'\t')output+="\\tab ";
     else if(ch==0x2028)output+="\\line ";
     else if(ch>=32&&ch<127&&(!font||ch!=u';'))output+=char(ch);
@@ -475,8 +477,8 @@ std::string gtkRtfWrite(const GtkRtfDocument& document) {
   output+="}\n";
   for(const auto& metadata:document.metadata){if(metadata.size()>GtkRtfMaxBytes-output.size())fail(7);output+=metadata;}
   auto control=[&](const char* name,int64_t value){output+='\\';output+=name;output+=std::to_string(value);};
-  auto formatting=[&](const GtkRtfStyle& style) {
-    output+="\\pard\\plain";
+  auto formatting=[&](const GtkRtfStyle& style,bool paragraphs=true) {
+    output+=paragraphs?"\\pard\\plain":"\\plain";
     control("f",int64_t(fonts.at({style.font,style.charset})));control("fs",int64_t(std::lround(style.size*2)));
     if(std::abs(style.size*2-std::round(style.size*2))>0.000001)control("fsmilli",int64_t(std::lround(style.size*1000)));
     if(style.bold)output+="\\b";if(style.italic)output+="\\i";if(style.strike)output+="\\strike";
@@ -487,13 +489,15 @@ std::string gtkRtfWrite(const GtkRtfDocument& document) {
     if(style.script)output+=style.script>0?"\\super":"\\sub";
     else if(style.rise){if(style.rise%10)fail(380,"RTF baseline offsets require multiples of 10 twips");control(style.rise>0?"up":"dn",std::abs(style.rise)/10);}
     if(style.spacing)control("expndtw",style.spacing);if(style.language)control("lang",style.language);
-    const auto& para=style.paragraph;
-    output+=para.alignment==1?"\\qr":para.alignment==2?"\\qc":para.alignment==3?"\\qj":"\\ql";
-    if(para.left)control("li",para.left);if(para.right)control("ri",para.right);if(para.first)control("fi",para.first);
-    if(para.before)control("sb",para.before);if(para.after)control("sa",para.after);if(para.rtl)output+="\\rtlpar";
-    for(auto tab:para.tabs)control("tx",tab);
-    if(para.bullet)output+="{\\*\\pn\\pnlvlblt{\\pntxtb\\u8226?}}";
-    output+=' ';
+    if(paragraphs) {
+      const auto& para=style.paragraph;
+      output+=para.alignment==1?"\\qr":para.alignment==2?"\\qc":para.alignment==3?"\\qj":"\\ql";
+      if(para.left)control("li",para.left);if(para.right)control("ri",para.right);if(para.first)control("fi",para.first);
+      if(para.before)control("sb",para.before);if(para.after)control("sa",para.after);if(para.rtl)output+="\\rtlpar";
+      for(auto tab:para.tabs)control("tx",tab);
+      if(para.bullet)output+="{\\*\\pn\\pnlvlblt{\\pntxtb\\u8226?}}";
+    }
+    if(output.back()!='}')output+=' ';
   };
   size_t previous=0;
   for(const auto& run:document.runs) {
@@ -501,7 +505,7 @@ std::string gtkRtfWrite(const GtkRtfDocument& document) {
     formatting(run.style);encodedText(output,document.text.substr(run.first,run.last-run.first));previous=run.last;
   }
   if(previous!=document.text.size())invalid("text without formatting runs");
-  if(document.text.empty()||document.text.back()==u'\n')formatting(document.emptyStyle);
+  formatting(document.emptyStyle,document.text.empty()||document.text.back()==u'\n');
   output+='}';if(output.size()>GtkRtfMaxBytes)fail(7,"Serialized RTF exceeds 16 MiB");return output;
 }
 }
