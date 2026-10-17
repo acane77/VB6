@@ -2,12 +2,12 @@
   "version": 2,
   "files": {
     "dist/studio.js": {
-      "bytes": 13984720,
-      "sha256": "b0e24aaf0d22ade1f065fd4b29481e662f4bd0611cf7d0b25b3e5ddfd176e26f"
+      "bytes": 15670027,
+      "sha256": "6067b22713fdd8355ae840d64336acceb6d112f9d61ecf6977524dd1330b1a20"
     },
     "dist/VB6-Studio-Web.html": {
-      "bytes": 14834550,
-      "sha256": "1b5bad8c577cf852980a94c86e9a1f33e2385fed02a4ae9190de4180b2ce3876"
+      "bytes": 16519857,
+      "sha256": "cd552c9071caa95f683078bc2491973385895345c8b757fadcd6bafa52e99f8f"
     },
     "dist/intelligent-ui-sandbox.html": {
       "bytes": 36292,
@@ -66,8 +66,8 @@
       "sha256": "59922897a61a2c199b0dd23a4b63b13884f1f3bf00505c636501491bf4088d7e"
     },
     "dist/vb6-linux.js": {
-      "bytes": 2045087,
-      "sha256": "ba60d05f62441ee20a22f83ab7928b8cfc740125f2473ec38ec3ba38bee5c253"
+      "bytes": 3726648,
+      "sha256": "7cc1f61c53f9222e20e4a96e7b7fcc9b2be1a24199f96fe0c07ac9ef7727ce7e"
     },
     "dist/auto-layout.js": {
       "bytes": 77517,
