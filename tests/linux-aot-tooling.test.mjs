@@ -12,6 +12,10 @@ function fixture(architecture,executionMode){
   for(const name of cases)proof[name]={runtimeSha256:manifest.sha256,architecture:target.architecture,machine:target.machine,callingConvention:target.callingConvention,executableSha256:'b'.repeat(64)};
   proof.nativeFixtures=Object.fromEntries(['gtkSignals','richText','printers','previousInstance'].map(name=>[name,{passed:true,...proof['language-O0']}]));
   proof.compiledServices={passed:true};
+  if(architecture==='arm64'&&executionMode==='qemu-user'){
+    proof.emulatedPageSizesVerified=[4096,16384,65536];
+    proof.emulatedPageCases=Object.fromEntries(proof.emulatedPageSizesVerified.map(pageBytes=>[pageBytes,{...proof['resource-path-O2'],pageBytes}]));
+  }
   return {proof,manifest};
 }
 test('Compressed runtime archives retain the exact architecture-specific filename',async()=>{
@@ -26,10 +30,11 @@ test('Execution proof preserves native x64 versus emulated ARM64 provenance',()=
     const {proof,manifest}=fixture(architecture,mode),verification=linuxAOTExecutionVerification(proof,manifest);
     assert.equal(verification.architecture,linuxTarget(architecture).architecture);assert.equal(verification.executionMode,mode);assert.equal(verification[architecture+'ExecutionVerified'],true);
     assert.equal(verification.emulatorVersion,mode==='qemu-user'?proof.emulatorVersion:undefined);
+    assert.deepEqual(verification.emulatedPageSizesVerified,mode==='qemu-user'?[4096,16384,65536]:undefined);
   }
 });
 test('Embedding proof rejects wrong architecture, partial execution, missing cases and inconsistent hosts',()=>{
-  for(const change of [p=>p.arch='x64',p=>p.architecture='x86_64',p=>p.runtime.sha256='c'.repeat(64),p=>p.optimizationLevelsVerified.pop(),p=>p.arm64ExecutionVerified=false,p=>p.machineCodeExecutionVerified=false,p=>p.gtkNativeSignalsVerified=false,p=>p.executionMode='native',p=>p.emulatorVersion='',p=>delete p['language-O3'],p=>p['gtk-controls-O2'].machine=62,p=>p['large-O2'].runtimeSha256='c'.repeat(64),p=>p.richTextVerified=false,p=>p.printerServicesVerified=false,p=>p.previousInstanceVerified=false,p=>delete p.nativeFixtures.richText,p=>p.nativeFixtures.printers.runtimeSha256='c'.repeat(64),p=>p.nativeFixtures.previousInstance.passed=false,p=>p.compiledServices.passed=false,p=>delete p['compiled-printers-O3'],p=>p.error={message:'failed'}]){
+  for(const change of [p=>p.arch='x64',p=>p.architecture='x86_64',p=>p.runtime.sha256='c'.repeat(64),p=>p.optimizationLevelsVerified.pop(),p=>p.arm64ExecutionVerified=false,p=>p.machineCodeExecutionVerified=false,p=>p.gtkNativeSignalsVerified=false,p=>p.executionMode='native',p=>p.emulatorVersion='',p=>delete p['language-O3'],p=>p['gtk-controls-O2'].machine=62,p=>p['large-O2'].runtimeSha256='c'.repeat(64),p=>p.richTextVerified=false,p=>p.printerServicesVerified=false,p=>p.previousInstanceVerified=false,p=>delete p.nativeFixtures.richText,p=>p.nativeFixtures.printers.runtimeSha256='c'.repeat(64),p=>p.nativeFixtures.previousInstance.passed=false,p=>p.compiledServices.passed=false,p=>delete p['compiled-printers-O3'],p=>p.emulatedPageSizesVerified.pop(),p=>delete p.emulatedPageCases[16384],p=>p.emulatedPageCases[65536].executableSha256='c'.repeat(64),p=>p.error={message:'failed'}]){
     const {proof,manifest}=fixture('arm64','qemu-user');change(proof);assert.throws(()=>linuxAOTExecutionVerification(proof,manifest),/Embedding requires/);
   }
 });

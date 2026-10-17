@@ -39,10 +39,11 @@ export function linuxAOTExecutionVerification(proof,manifest) {
   if(proof?.error||proof?.platform!=='linux'||proof?.arch!==target.option||proof?.architecture!==target.architecture||proof?.runtime?.sha256!==manifest.sha256||
       !features.every(name=>proof?.[name]===true)||JSON.stringify(proof?.optimizationLevelsVerified)!=='[0,1,2,3]'||
       !(native&&proof.hostArchitecture===target.option||emulated&&['x64','arm64'].includes(proof.hostArchitecture)&&proof.hostArchitecture!==target.option&&/qemu/i.test(proof.emulatorVersion||''))||
-      !evidence.every(name=>validEvidence(proof?.[name]))||!nativeFixtures.every(name=>proof?.nativeFixtures?.[name]?.passed===true&&validEvidence(proof.nativeFixtures[name]))||proof?.compiledServices?.passed!==true)
+      !evidence.every(name=>validEvidence(proof?.[name]))||!nativeFixtures.every(name=>proof?.nativeFixtures?.[name]?.passed===true&&validEvidence(proof.nativeFixtures[name]))||proof?.compiledServices?.passed!==true||
+      emulated&&target.option==='arm64'&&(JSON.stringify(proof.emulatedPageSizesVerified)!=='[4096,16384,65536]'||![4096,16384,65536].every(size=>proof.emulatedPageCases?.[size]?.pageBytes===size&&validEvidence(proof.emulatedPageCases[size])&&proof.emulatedPageCases[size].executableSha256===proof['resource-path-O2'].executableSha256)))
     throw new Error('Embedding requires exact-runtime Linux '+target.option+' machine-code execution, GTK, rich text, printer services, previous-instance, conformance, resource, lifetime, large-project and O0..O3 proof.');
   return {platform:'linux',architecture:target.architecture,executionMode:proof.executionMode,hostArchitecture:proof.hostArchitecture,
-    ...(emulated?{emulatorVersion:proof.emulatorVersion}:{}),...Object.fromEntries(features.map(name=>[name,true])),optimizationLevelsVerified:[0,1,2,3],
+    ...(emulated?{emulatorVersion:proof.emulatorVersion,...(target.option==='arm64'?{emulatedPageSizesVerified:[4096,16384,65536]}:{})}:{}),...Object.fromEntries(features.map(name=>[name,true])),optimizationLevelsVerified:[0,1,2,3],
     nativeFixtureSha256:Object.fromEntries(nativeFixtures.map(name=>[name,proof.nativeFixtures[name].executableSha256])),
     projectExecutableSha256:Object.fromEntries(evidence.map(name=>[name,proof[name].executableSha256]))};
 }
@@ -54,6 +55,7 @@ export function checkLinuxAOTRuntimeProvenance(sourceRoot=root,{architecture='x6
   const verification=manifest?.verification;
   if(!manifest||manifest.abi!==AOT_ABI||manifest.architecture!==target.architecture||manifest.machine!==target.machine||manifest.callingConvention!==target.callingConvention||manifest.pageBytes!==target.pageBytes||verification?.platform!=='linux'||verification?.architecture!==target.architecture||
       !(verification.executionMode==='native'&&verification.hostArchitecture===target.option||verification.executionMode==='qemu-user'&&['x64','arm64'].includes(verification.hostArchitecture)&&verification.hostArchitecture!==target.option&&/qemu/i.test(verification.emulatorVersion||''))||
+      verification.executionMode==='qemu-user'&&target.option==='arm64'&&JSON.stringify(verification.emulatedPageSizesVerified)!=='[4096,16384,65536]'||
       !['machineCodeExecutionVerified',target.option+'ExecutionVerified','gtkExecutionVerified','gtkNativeSignalsVerified','conformanceVerified','resourcesVerified','lifetimeVerified','codeMetadataGrowthVerified','richTextVerified','printerServicesVerified','previousInstanceVerified'].every(name=>verification?.[name]===true)||
       JSON.stringify(verification?.optimizationLevelsVerified)!=='[0,1,2,3]')
     throw new Error('Linux AOT runtime lacks native execution provenance.');

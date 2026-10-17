@@ -58,9 +58,10 @@ export async function testLinuxAOT({architecture='x64',rebuild=false,runtimeDire
   const log=value=>{transcript+=value;if(transcript.length>16*1024*1024)transcript=transcript.slice(-16*1024*1024);};
   const run=(executable,args=[],options={})=>runTool(executable,args,{cwd:work,timeout:60000,log,...options});
   let emulator;
-  const execute=async(executable,args=[],{gtk=false,argv0}={})=>{
+  const execute=async(executable,args=[],{gtk=false,argv0,pageBytes}={})=>{
     let command=executable,arguments_=args;
-    if(emulator){command=emulator;arguments_=['-L',sysroot,...(argv0?['-0',argv0]:[]),executable,...args];}
+    if(pageBytes&&!emulator)throw new Error('Page-size overrides require QEMU execution.');
+    if(emulator){command=emulator;arguments_=['-L',sysroot,...(pageBytes?['-p',String(pageBytes)]:[]),...(argv0?['-0',argv0]:[]),executable,...args];}
     if(gtk)return run(await linuxNativeTool('xvfb-run'),['-a','--server-args=-screen 0 1280x900x24',command,...arguments_]);
     return run(command,arguments_);
   };
@@ -154,6 +155,15 @@ export async function testLinuxAOT({architecture='x64',rebuild=false,runtimeDire
     if(emulator)validateConformance(await execute(resourceCase.executable,[],{argv0:path.basename(resourceCase.executable)}));
     else validateConformance(await run(env,['PATH='+path.dirname(resourceCase.executable)+path.delimiter+(process.env.PATH||''),path.basename(resourceCase.executable)]));
     report.checks.push('PATH-style argv[0] resolves executable-relative resources from another working directory');
+    if(emulator&&architecture==='arm64'){
+      report.emulatedPageSizesVerified=[];report.emulatedPageCases={};
+      for(const pageBytes of [4096,16384,65536]){
+        validateConformance(await execute(resourceCase.executable,[],{pageBytes}));
+        report.emulatedPageSizesVerified.push(pageBytes);
+        report.emulatedPageCases[pageBytes]={...report['resource-path-O2'],pageBytes};
+      }
+      report.checks.push('The same ARM64 archived conformance ELF executed with QEMU 4/16/64 KiB page settings');
+    }
     await nativeCase('program-roots',programLifetimeProject(),2,validateRoots);
     assert.deepEqual((await fs.readFile(path.join(work,'native-program-lifetime.txt'),'utf8')).trim().split(/\r?\n/).sort(),['array','global','static']);
     await nativeCase('abrupt-End',abruptLifetimeProject(),2,output=>{
