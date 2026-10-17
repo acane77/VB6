@@ -23,9 +23,10 @@ GtkScreenState& screenState(GtkHost& host){
   return *std::static_pointer_cast<GtkScreenState>(value);
 }
 struct CursorState {
-  GdkCursor* original;
+  GdkCursor* original;GdkCursor* applied=nullptr;
   explicit CursorState(GdkWindow* window):original(gdk_window_get_cursor(window)){if(original)g_object_ref(original);}
-  ~CursorState(){if(original)g_object_unref(original);}
+  ~CursorState(){if(original)g_object_unref(original);if(applied)g_object_unref(applied);}
+  static void replace(GdkCursor*& target,GdkCursor* value){if(value)g_object_ref(value);if(target)g_object_unref(target);target=value;}
 };
 void applyCursorWindow(GtkControl& fallback,GdkWindow* window,int global){
   if(!window||gdk_window_is_destroyed(window))return;
@@ -35,14 +36,16 @@ void applyCursorWindow(GtkControl& fallback,GdkWindow* window,int global){
   auto& control=owner?*owner:fallback;const auto pointer=global?global:int(control.number("mousepointer"));
   constexpr const char* key="vb6-original-cursor";
   auto* saved=static_cast<CursorState*>(g_object_get_data(G_OBJECT(window),key));
+  // GTK can change its native cursor when focus, sensitivity, or input changes.
+  if(saved&&gdk_window_get_cursor(window)!=saved->applied)CursorState::replace(saved->original,gdk_window_get_cursor(window));
   if(!pointer){if(saved){gdk_window_set_cursor(window,saved->original);g_object_set_data(G_OBJECT(window),key,nullptr);}}
   else {
-    if(!saved)g_object_set_data_full(G_OBJECT(window),key,new CursorState(window),+[](gpointer data){delete static_cast<CursorState*>(data);});
+    if(!saved){saved=new CursorState(window);g_object_set_data_full(G_OBJECT(window),key,saved,+[](gpointer data){delete static_cast<CursorState*>(data);});}
     static const char* names[]={"default","default","crosshair","text","icon","move","nesw-resize","ns-resize","nwse-resize","ew-resize","up-arrow","wait","not-allowed","progress","help","move"};
     GdkCursor* cursor=nullptr;
     if(pointer==99){auto value=control.property("mouseicon",Value::object(nullptr));auto picture=value.type==Type::Object?std::dynamic_pointer_cast<GtkPicture>(std::get<ObjectPtr>(value.payload)):nullptr;if(picture&&picture->pixels)cursor=gdk_cursor_new_from_pixbuf(gdk_window_get_display(window),picture->pixels,picture->hotspotX,picture->hotspotY);}
     if(!cursor)cursor=gdk_cursor_new_from_name(gdk_window_get_display(window),pointer>=0&&pointer<=15?names[pointer]:"default");
-    gdk_window_set_cursor(window,cursor);if(cursor)g_object_unref(cursor);
+    gdk_window_set_cursor(window,cursor);CursorState::replace(saved->applied,cursor);if(cursor)g_object_unref(cursor);
   }
   auto* children=gdk_window_get_children(window);
   for(auto* child=children;child;child=child->next)applyCursorWindow(control,GDK_WINDOW(child->data),global);
@@ -117,6 +120,20 @@ std::string settingPart(const Value& value){auto name=toUTF8(changeCase(value.st
 void gtkApplyMousePointer(GtkControl& control){
   if(control.disposed||control.hostLife.expired()||!control.view||!gtk_widget_get_realized(control.view))return;
   applyCursorWindow(control,gtk_widget_get_window(control.view),screenState(*control.host).mousePointer);
+}
+void gtkConnectMousePointer(GtkControl& control){
+  auto connect=[&](GtkWidget* target,const char* signal,GCallback callback){
+    g_signal_connect_data(target,signal,callback,new std::weak_ptr<GtkControl>(control.self()),
+      +[](gpointer data,GClosure*){delete static_cast<std::weak_ptr<GtkControl>*>(data);},G_CONNECT_AFTER);
+  };
+  for(auto* target:std::set<GtkWidget*>{control.view,control.widget,control.editor()})if(target){
+    connect(target,"realize",G_CALLBACK(+[](GtkWidget*,gpointer data){gtkEvent(data,[](GtkControl& c){gtkApplyMousePointer(c);});}));
+    connect(target,"map",G_CALLBACK(+[](GtkWidget*,gpointer data){gtkEvent(data,[](GtkControl& c){gtkApplyMousePointer(c);});}));
+    // GtkEntry resets its text-area cursor in the state-flags class handler
+    // (notably focus), and restores it from motion/drag/key event handlers.
+    connect(target,"state-flags-changed",G_CALLBACK(+[](GtkWidget*,GtkStateFlags,gpointer data){gtkEvent(data,[](GtkControl& c){gtkApplyMousePointer(c);});}));
+    connect(target,"event-after",G_CALLBACK(+[](GtkWidget*,GdkEvent*,gpointer data){gtkEvent(data,[](GtkControl& c){gtkApplyMousePointer(c);});}));
+  }
 }
 void gtkRegisterApplication(GtkHost& host){
   if(host.systemObjects.count("__application-instance"))return;

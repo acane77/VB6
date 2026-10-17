@@ -17,7 +17,7 @@ inline bool sameCursor(GdkWindow* window,const char* name){
 }
 inline int checkEditorWindows(GdkWindow* window,GtkWidget* editor,const char* cursor){
   gpointer owner=nullptr;gdk_window_get_user_data(window,&owner);int count=0;
-  if(owner==editor){require(sameCursor(window,cursor),"Screen cursor did not reach a native editor window");++count;}
+  if(owner==editor){if(!sameCursor(window,cursor))throw std::runtime_error(std::string("Screen cursor did not reach a native editor window: expected ")+cursor);++count;}
   auto* children=gdk_window_get_children(window);for(auto* child=children;child;child=child->next)count+=checkEditorWindows(GDK_WINDOW(child->data),editor,cursor);g_list_free(children);return count;
 }
 inline std::shared_ptr<vb6::Instance> form(vb6::Runtime& runtime,vb6::GtkHost& host,const std::string& name){
@@ -39,14 +39,17 @@ inline void qualifyGtkScreenCursors(vb6::Runtime& runtime,vb6::GtkHost& host){
   auto* window=gtk_widget_get_window(native->window);
   require(sameCursor(window,"wait"),"A newly realized form did not inherit Screen.MousePointer");
   require(vb6_cursor_contracts::checkEditorWindows(window,editor->widget,"wait")>0,"Native GTK entry has no testable cursor window");
+  std::cout<<"CURSOR_INITIAL_OK\n";
   require(native->surface->get(runtime,"MousePointer").integral()==2&&editor->get(runtime,"MousePointer").integral()==3,"Screen cursor changed individual control properties");
   auto later=vb6_cursor_contracts::form(runtime,host,"CursorLater");auto laterNative=host.form(later);
   require(sameCursor(gtk_widget_get_window(laterNative->window),"wait"),"A later form lost the application cursor override");
   editor->set(runtime,"MousePointer",Value::integer(2));host.pump();
   require(sameCursor(window,"wait")&&vb6_cursor_contracts::checkEditorWindows(window,editor->widget,"wait")>0,"Control refresh bypassed the application cursor override");
+  std::cout<<"CURSOR_OVERRIDE_OK\n";
   secondReference->set(runtime,"MousePointer",Value::integer(0));host.pump();
   require(screen->get(runtime,"MousePointer").integral()==0&&sameCursor(window,"crosshair"),"Clearing Screen.MousePointer failed to restore the form cursor");
   require(vb6_cursor_contracts::checkEditorWindows(window,editor->widget,"crosshair")>0,"Clearing Screen.MousePointer lost a changed control cursor");
+  std::cout<<"CURSOR_RESTORE_OK\n";
   editor->set(runtime,"MousePointer",Value::integer(0));host.pump();
   require(sameCursor(window,"crosshair"),"A windowless editor refresh changed the form cursor");
   require(vb6_cursor_contracts::checkEditorWindows(window,editor->widget,"text")>0,"Default MousePointer did not restore GTK's native text cursor");

@@ -191,9 +191,7 @@ void GtkControl::initialize() {
   if(type=="MSChart")resizeGrid(size_t(number("rowcount",5)),size_t(number("columncount",1)));
   if(content||type=="Image"||type=="Line"||type=="Shape"||type=="MSChart")gtkSignal(widget,"draw",G_CALLBACK(+[](GtkWidget*,cairo_t* cr,gpointer data)->gboolean {gtkEvent(data,[&](GtkControl& c){gtkDraw(c,cr);});return FALSE;}),self());
   gtkConnectInput(*this);
-  gtkSignal(view,"realize",G_CALLBACK(+[](GtkWidget*,gpointer data){gtkEvent(data,[](GtkControl& c){gtkApplyMousePointer(c);});}),self());
-  // GtkEntry creates/restyles its text cursor while mapping, after realize.
-  gtkSignal(view,"map",G_CALLBACK(+[](GtkWidget*,gpointer data){gtkEvent(data,[](GtkControl& c){gtkApplyMousePointer(c);});}),self());
+  gtkConnectMousePointer(*this);
   auto initial=property("list");if(initial.type==Type::Array)for(auto& value:initial.asArray()->values)list.push_back(value.string());itemData.resize(list.size());
   if(type=="DriveListBox"||type=="DirListBox"||type=="FileListBox")reloadFiles();
   refresh();applyFrame();applyFont();
