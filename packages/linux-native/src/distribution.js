@@ -30,6 +30,7 @@ export function linuxDistributionOptions(options={},applicationName='Application
   const description=options.description??summary;
   if(typeof description!=='string'||!description.trim()||description.length>16384||/[\x00-\x08\x0b-\x1f\x7f\u2028\u2029]/.test(description))throw new Error('Invalid Linux package description');
   const license=singleLine(options.license??'Unspecified','license',128),homepage=options.homepage??'';
+  if(typeof homepage!=='string')throw new Error('Invalid Linux package homepage');
   if(homepage){singleLine(homepage,'homepage',2048);let url;try{url=new URL(homepage);}catch{throw new Error('Invalid Linux package homepage');}
     if(!['https:','http:'].includes(url.protocol)||url.username||url.password)throw new Error('Package homepage must be an HTTP(S) URL without credentials');}
   const categories=options.categories??['Utility'];

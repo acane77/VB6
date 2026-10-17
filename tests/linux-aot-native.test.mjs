@@ -5,7 +5,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import os from 'node:os';
 import path from 'node:path';
-import {exportLinuxApplication,exportLinuxAOT,loadLinuxAOTRuntime,linuxAOTRuntimeInfo,verifyLinuxAOTRuntime} from '../packages/linux-native/src/index.js';
+import {exportLinuxApplication,exportLinuxAOT,loadLinuxAOTRuntime,verifyLinuxAOTRuntime} from '../packages/linux-native/src/index.js';
 import {setResourceString} from '../src/project/res.js';
 const execute=promisify(execFile);
 const architecture=process.arch==='arm64'?'arm64':'x64',runtimeArchitecture=architecture==='arm64'?'arm64':'x86_64';

@@ -36,7 +36,7 @@ export function installLinuxExport(ide, api) {
       el('option', {value: 'x64'}, 'x86-64'), el('option', {value: 'arm64'}, 'ARM64'));
     const format = el('select', {'aria-label': 'Linux package format'},
       ...Object.entries(LINUX_DISTRIBUTION_FORMATS).map(([value, item]) => el('option', {value}, item.label)));
-    const packageName = el('input', {value: linuxDistributionOptions({}, ide.project.name).packageName, maxlength: 64, 'aria-label': 'Linux package name'});
+    const packageName = el('input', {value: linuxDistributionOptions({summary: 'Application'}, ide.project.name).packageName, maxlength: 64, 'aria-label': 'Linux package name'});
     const version = el('input', {value: '1.0.0', maxlength: 64, 'aria-label': 'Linux package version'});
     const maintainer = el('input', {value: 'Unspecified publisher', maxlength: 256, 'aria-label': 'Linux package publisher'});
     const license = el('input', {value: 'Unspecified', maxlength: 128, 'aria-label': 'Linux application license'});

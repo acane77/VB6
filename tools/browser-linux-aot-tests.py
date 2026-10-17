@@ -86,6 +86,12 @@ with sync_playwright() as pw:
                 page.get_by_role('button', name='Close', exact=True).click()
                 page.get_by_role('dialog', name='Make Linux GTK Application').wait_for(state='detached')
 
+            page.evaluate('vb6Studio.project.name = "x".repeat(300)')
+            open_dialog()
+            check(origin + ': an invalid initial name leaves the dialog usable', 'Invalid Linux application name' in page.get_by_role('dialog', name='Make Linux GTK Application').get_by_role('status').inner_text())
+            close_dialog()
+            page.evaluate('project => vb6Studio.loadProject(VB6StudioAPI.normalizeProject(project))', fixture)
+
             open_dialog()
             page.get_by_role('button', name='Export Linux Application', exact=True).click()
             page.wait_for_function('vb6Studio.lastLinuxBuild?.compiled === true || vb6Studio.lastLinuxBuild?.success === false', timeout=90000)

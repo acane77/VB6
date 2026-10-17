@@ -42,7 +42,7 @@ test('Linux package metadata rejects field, path, desktop, and spec injection',(
   for(const options of [{format:'appimage'},{packageName:'../evil'},{packageName:'x;touch-pwn'},{packageName:'$(id)'},{packageName:'name\nBreak: true'},
     {version:'1.0-1'},{version:'1%{lua:print(1)}'},{release:'0'},{release:1},{maintainer:'X\nDepends: bad'},
     {summary:'X\nExec=bad'},{description:'text\rDepends: bad'},{license:'MIT\0bad'},{homepage:'file:///tmp/example'},
-    {homepage:'https://user:password@example.com'},{categories:['Utility;Exec=bad']},{categories:['Utility','Utility']},{categories:[]}])assert.throws(()=>linuxDistributionOptions(options));
+    {homepage:'https://user:password@example.com'},{homepage:false},{homepage:0},{categories:['Utility;Exec=bad']},{categories:['Utility','Utility']},{categories:[]}])assert.throws(()=>linuxDistributionOptions(options));
   const options=linuxDistributionOptions({packageName:'test-app',description:'First line\n\nLast line',homepage:'https://example.com/app',categories:['Utility','Office']},'Zażółć App');
   assert.equal(options.summary,'Zażółć App');assert.equal(options.license,'Unspecified');assert.ok(Object.isFrozen(options.categories));
 });

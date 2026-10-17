@@ -29,7 +29,7 @@ export function installBuildTools(ide, adapter, {add, output, consent, commit, c
   adapter.dispose = () => { for (const id of artifacts.keys()) remove(id); observers.clear(); dispose(); };
   const find = (id, ctx) => { purge(); const item = artifacts.get(id); if (!item || item.owner !== owner(ctx)) throw new McpError(-32602, 'Build artifact not found or expired.'); return item; };
   const metadata = item => ({artifactId: item.id, manifestUri: 'vb6://build/' + item.id, name: item.name, mimeType: item.mimeType, size: item.bytes.length, sha256: item.sha256, sourceRevision: item.sourceRevision, expiresAt: item.expiresAt});
-  add('build.targets', 'Describe build/export targets. Building returns inert bytes; desktop packaging and the licensed classic compiler require their local CLI.', {}, [], () => output({
+  add('build.targets', 'Describe build/export targets. Building returns inert bytes; Electron desktop packaging and the licensed classic compiler require their local CLI.', {}, [], () => output({
     targets: [{id: 'project', format: 'JSON', extension: '.vb6web'}, {id: 'html', format: 'standalone application HTML', extension: '.html'},
       {id: 'sources', format: 'native source/project group ZIP', extension: '.zip'}, {id: 'win32', format: 'freestanding x86 PE32', extension: '.exe', graphics: 'native controls/GDI', compatibility: 'Existing native compiler subset; unsupported constructs return diagnostics.'},
       {id: 'linux', format: 'native ELF application', extension: '-linux-x64.zip', architectures: ['x64','arm64'], packageFormats: ['zip','tar.gz','deb','rpm'], graphics: 'GTK 3.24/Cairo', compatibility: 'Direct native AOT using the shared VB6 runtime; requires Linux with the matching architecture and archive-listed system libraries.'}],
