@@ -23,13 +23,16 @@ function pdfPages(bytes){
   return objects.reduce((total,value)=>total+(value.match(/\/Type\s*\/Page\b/g)||[]).length,0);
 }
 
-async function nativeCase(executable,mode,{service,home,prefix=[],onLine=()=>{}}) {
+async function nativeCase(executable,mode,{service,home,prefix=[],emulated=false,onLine=()=>{}}) {
   const env={...process.env,CUPS_SERVER:service.server,HOME:home,GTK_PRINT_BACKENDS:'cups'};
   delete env.DISPLAY;delete env.WAYLAND_DISPLAY;delete env.LPDEST;delete env.PRINTER;
+  // QEMU still opens and edits all three real GTK dialogs. Its software CPU
+  // needs a larger bounded watchdog; ordinary native qualification is unchanged.
+  if(emulated)env.VB6_GTK_TEST_EMULATED='1';else delete env.VB6_GTK_TEST_EMULATED;
   const command=prefix.length?prefix[0]:executable,args=[...prefix.slice(1),...(prefix.length?[executable]:[]),mode];
   const child=spawn(command,args,{env,stdio:['pipe','pipe','pipe']});let stdout='',stderr='',pending='';
   return new Promise((resolve,reject)=>{
-    const timeout=setTimeout(()=>{child.kill('SIGKILL');reject(new Error('Native printer fixture timed out: '+mode+'\n'+stdout+'\n'+stderr));},60000);
+    const timeout=setTimeout(()=>{child.kill('SIGKILL');reject(new Error('Native printer fixture timed out: '+mode+'\n'+stdout+'\n'+stderr));},emulated?180000:60000);
     child.on('error',error=>{clearTimeout(timeout);reject(error);});
     child.stdout.on('data',bytes=>{
       stdout+=bytes;pending+=bytes;
@@ -46,19 +49,19 @@ async function nativeCase(executable,mode,{service,home,prefix=[],onLine=()=>{}}
   });
 }
 
-export async function qualifyLinuxPrinters(executable,{prefix=[],printPrefix=['xvfb-run','-a']}={}) {
+export async function qualifyLinuxPrinters(executable,{prefix=[],printPrefix=['xvfb-run','-a'],emulated=false}={}) {
   const home=await fs.mkdtemp(path.join(os.tmpdir(),'vb6-cups-contracts-'));const results=[];
   try {
     const empty=await createMockCups({printers:[],defaultPrinter:''});
     try{
-      const stdout=await nativeCase(executable,'--empty',{service:empty,home,prefix});assert.match(stdout,/LINUX_PRINTERS_EMPTY_OK/);
+      const stdout=await nativeCase(executable,'--empty',{service:empty,home,prefix,emulated});assert.match(stdout,/LINUX_PRINTERS_EMPTY_OK/);
       assert.ok(empty.requests.some(value=>value.operation===0x4002),'Empty inventory did not query CUPS');assert.deepEqual(empty.errors,[]);
       results.push({name:'empty-service',requests:empty.requests.length});
     }finally{await empty.close();}
     for(const print of [false,true]){
       const service=await createMockCups();
       try{
-        const stdout=await nativeCase(executable,print?'--print':'--printers',{service,home,prefix:print?[...printPrefix,...prefix]:prefix,onLine:(line,child)=>{
+        const stdout=await nativeCase(executable,print?'--print':'--printers',{service,home,emulated,prefix:print?[...printPrefix,...prefix]:prefix,onLine:(line,child)=>{
           if(line==='READY_DEFAULT'){service.defaultPrinter='VB6_A';child.stdin.write('default-changed\n');}
           if(line==='READY_REMOVE'){service.printers=['VB6_A'];child.stdin.write('printer-removed\n');}
           if(line==='READY_REJECT'){service.rejectJobs=true;child.stdin.write('reject-jobs\n');}
@@ -84,7 +87,7 @@ export async function qualifyLinuxPrinters(executable,{prefix=[],printPrefix=['x
     }
     const dialogs=await createMockCups();
     try{
-      const stdout=await nativeCase(executable,'--dialogs',{service:dialogs,home,prefix:[...printPrefix,...prefix]});
+      const stdout=await nativeCase(executable,'--dialogs',{service:dialogs,home,emulated,prefix:[...printPrefix,...prefix]});
       assert.match(stdout,/LINUX_SCREEN_CURSORS_OK/);assert.match(stdout,/LINUX_GTK_PRINTER_DIALOGS_OK/);assert.deepEqual(dialogs.errors,[]);
       assert.equal(dialogs.documents.length,0,'The settings dialog submitted an empty print document');
       assert.equal(dialogs.requests.filter(value=>[2,5,6].includes(value.operation)).length,0,'The settings dialog created a CUPS job');

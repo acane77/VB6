@@ -49,7 +49,10 @@ inline bool paperMatches(GtkPageSetup* setup,int paper){
 struct Interaction {
   vb6::GtkHost& host;Snapshot initial;std::string destination;
   int copies,orientation,paper,response,phase=0;bool seen=false,completed=false;
-  guint source=0;gint64 deadline=g_get_monotonic_time()+30*G_TIME_SPAN_SECOND;
+  // Only the explicit emulation runner relaxes the watchdog. Queue discovery,
+  // settings changes, cancellation and every native GTK assertion still run.
+  guint source=0;gint64 deadline=g_get_monotonic_time()+
+    (g_strcmp0(g_getenv("VB6_GTK_TEST_EMULATED"),"1")==0?90:30)*G_TIME_SPAN_SECOND;
   std::exception_ptr failure;
   Interaction(vb6::GtkHost& value,Snapshot before,std::string selected,int count,int direction,int media,int answer)
     :host(value),initial(std::move(before)),destination(std::move(selected)),copies(count),orientation(direction),paper(media),response(answer){}
