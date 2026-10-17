@@ -192,6 +192,8 @@ void GtkControl::initialize() {
   if(content||type=="Image"||type=="Line"||type=="Shape"||type=="MSChart")gtkSignal(widget,"draw",G_CALLBACK(+[](GtkWidget*,cairo_t* cr,gpointer data)->gboolean {gtkEvent(data,[&](GtkControl& c){gtkDraw(c,cr);});return FALSE;}),self());
   gtkConnectInput(*this);
   gtkSignal(view,"realize",G_CALLBACK(+[](GtkWidget*,gpointer data){gtkEvent(data,[](GtkControl& c){gtkApplyMousePointer(c);});}),self());
+  // GtkEntry creates/restyles its text cursor while mapping, after realize.
+  gtkSignal(view,"map",G_CALLBACK(+[](GtkWidget*,gpointer data){gtkEvent(data,[](GtkControl& c){gtkApplyMousePointer(c);});}),self());
   auto initial=property("list");if(initial.type==Type::Array)for(auto& value:initial.asArray()->values)list.push_back(value.string());itemData.resize(list.size());
   if(type=="DriveListBox"||type=="DirListBox"||type=="FileListBox")reloadFiles();
   refresh();applyFrame();applyFont();
