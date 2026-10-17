@@ -80,6 +80,8 @@ The GTK host now provides these native services:
 | --- | --- |
 | `RichTextBox` | Native attributed text, `TextRTF`/`SelRTF`, selection font/color/style and paragraph formatting, protected/hidden text, Unicode selection/search, and RTF file persistence. `LoadFile`/`SaveFile` default to RTF format `0`; explicit format `1` reads/writes plain UTF-8 text. |
 | `Printers` / `Printer` | Headless CUPS enumeration, zero-based `Printers(index)`/`Item`, `For Each`, validated `Set Printer = Printers(index)`, queue metadata, page settings, and native GTK print-job submission/cancellation. |
+| `CommonDialog.ShowPrinter` | Native GTK selection updates accepted printer settings without submitting a job. Cancellation preserves the settings and honors `CancelError`. |
+| `Screen.MousePointer` | Standard cursor state (`0`–`15`) persists for current and future controls; reset to `0` restores control defaults. |
 | `App.PrevInstance` | Registered at host attachment, before any property read. A stable startup snapshot detects older live instances of the same canonical executable for the current user, including aliases, concurrent starts, and crash cleanup. |
 
 RTF is bounded to 16 MiB, 4 Mi UTF-16 text units, and 65,536 formatting runs. Unsupported visible RTF constructs such as embedded objects/images, tables, and unsupported line spacing raise diagnostics before changing the document; formatting is never silently flattened. GTK4, an all-static GTK distribution, AppImage, and Flatpak remain separate targets. The ELF application directory and Debian/RPM installers require their recorded system libraries.

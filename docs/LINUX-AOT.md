@@ -201,7 +201,9 @@ These GTK host services use native objects and preserve the shared VB runtime se
 | --- | --- |
 | `RichTextBox` | GTK text-buffer tags implement `TextRTF`/`SelRTF`, selection font/size/bold/italic/underline/strike/colors, paragraph alignment/indents/tabs/bullets, hidden/protected text, and UTF-16-compatible selection/search. File methods default to RTF format `0`; format `1` explicitly selects plain UTF-8. |
 | `Printers` collection | CUPS enumeration works without a display. Supports zero-based `Printers(index)`/`Item`, `For Each`, queue metadata, page settings, and `Set Printer = Printers(index)`. Linux lowering preserves ordinary variables, parameters, fields, procedures, and controls named `Printer` or `Printers`. |
-| `Printer` jobs | Native GTK/CUPS job submission follows the selected queue and page settings. Cancellation avoids submitting a job; asynchronous submission rejection becomes a VB error instead of a false success. |
+| `Printer` jobs | Native GTK/CUPS job submission follows the selected queue and page settings. Cancellation avoids submitting a job; CUPS rejection raises error `482` and preserves the pending document. |
+| `CommonDialog.ShowPrinter` | The native GTK settings dialog updates the selected printer, page setup, and copies after acceptance without submitting a job. Cancellation preserves the current settings and honors `CancelError`. |
+| `Screen.MousePointer` | Standard cursor values `0`–`15` are retained for the application, applied to existing and newly realized controls, and restored to control defaults when reset to `0`. |
 | `App.PrevInstance` | Every host registers at attachment, before property access. A per-user canonical-executable registry uses process locks and an atomic startup snapshot to detect older live instances, clean crash markers, and keep executable aliases consistent. Distinct executable copies are separate applications. |
 
 The RTF parser resolves grouped state, font/color/style tables, code pages, and Unicode fallback. Input is bounded to 16 MiB, 4 Mi UTF-16 text units, 65,536 formatting runs, and bounded table/group counts. Unsupported visible constructs such as embedded pictures/objects, tables, or unsupported line spacing raise error `453` before document mutation; malformed values receive diagnostics. No active embedded content is executed and no formatting is silently converted to plain text. Native and compiled VB fixtures test formatting round trips and failed-import preservation.
@@ -265,7 +267,7 @@ node tools/build-linux-native.mjs
 npm run build:update-ide-artifacts
 ```
 
-Embedding requires passing exact-runtime machine-code execution, GTK signals, RTF, printer, previous-instance, resource, lifetime, large-project, and O0–O3 evidence. Cross builds require an explicit ARM64 sysroot, cross compiler, and QEMU; proof records emulated execution distinctly from native execution. ARM64 qualification also executes with 4/16/64 KiB QEMU page settings. No bootstrap or unverified payload may be embedded. Source provenance covers the portable runtime, shared AOT helpers, GTK host, Linux loader, and ABI definition. Normal package/IDE builds validate both architectures and reject missing or stale payloads.
+Embedding requires passing exact-runtime machine-code execution, GTK signals, RTF, printer, previous-instance, resource, lifetime, large-project, and O0–O3 evidence. Cross builds require an explicit ARM64 sysroot, cross compiler, and QEMU; proof records emulated execution distinctly from native execution. Emulated ARM64 qualification executes the same conformance binary with 4/16/64 KiB QEMU page settings. No bootstrap or unverified payload may be embedded. Source provenance covers the portable runtime, shared AOT helpers, GTK host, Linux loader, and ABI definition. Normal package/IDE builds validate both architectures and reject missing or stale payloads.
 
 ## Primary references
 
