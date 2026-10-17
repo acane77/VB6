@@ -58,12 +58,12 @@ export async function testLinuxAOT({architecture='x64',rebuild=false,runtimeDire
   const log=value=>{transcript+=value;if(transcript.length>16*1024*1024)transcript=transcript.slice(-16*1024*1024);};
   const run=(executable,args=[],options={})=>runTool(executable,args,{cwd:work,timeout:60000,log,...options});
   let emulator;
-  const execute=async(executable,args=[],{gtk=false,argv0,pageBytes}={})=>{
+  const execute=async(executable,args=[],{gtk=false,argv0,pageBytes,timeout=60000}={})=>{
     let command=executable,arguments_=args;
     if(pageBytes&&!emulator)throw new Error('Page-size overrides require QEMU execution.');
     if(emulator){command=emulator;arguments_=['-L',sysroot,...(pageBytes?['-p',String(pageBytes)]:[]),...(argv0?['-0',argv0]:[]),executable,...args];}
-    if(gtk)return run(await linuxNativeTool('xvfb-run'),['-a','--server-args=-screen 0 1280x900x24',command,...arguments_]);
-    return run(command,arguments_);
+    if(gtk)return run(await linuxNativeTool('xvfb-run'),['-a','--server-args=-screen 0 1280x900x24',command,...arguments_],{timeout});
+    return run(command,arguments_,{timeout});
   };
   try {
     assert.equal(process.platform,'linux','Linux AOT acceptance requires actual Linux execution.');
@@ -102,6 +102,7 @@ export async function testLinuxAOT({architecture='x64',rebuild=false,runtimeDire
       const objects=runtime.build.objects.filter(entry=>entry.source!=='aot/template-main.cpp').map(entry=>entry.object);
       report.nativeFixtures={};
       const nativeFixture=async(name,filename,qualify)=>{
+        console.log('Qualifying native '+name+' ('+target.architecture+')...');
         const source=path.join(root,'packages/linux-native/tests',filename),executable=path.join(work,'native-'+name);
         await run(runtime.build.compiler,[...runtime.build.compilerFlags,'-std=c++17','-O2','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-deprecated-declarations',...includes,...runtime.build.cflags,source,...runtime.build.linkOptions,...objects,...runtime.build.libraries,'-ldl','-pthread','-o',executable],{timeout:600000});
         const bytes=await fs.readFile(executable),image=inspectLinuxELF(bytes,{architecture});
@@ -109,10 +110,14 @@ export async function testLinuxAOT({architecture='x64',rebuild=false,runtimeDire
         const qualification=await qualify(executable);
         report.nativeFixtures[name]={passed:true,runtimeSha256:runtime.manifest.sha256,executableSha256:createHash('sha256').update(bytes).digest('hex'),
           architecture:target.architecture,machine:target.machine,callingConvention:target.callingConvention,...(qualification?{qualification}:{})};
+        console.log('Native '+name+' qualification passed.');
         return {executable,evidence:report.nativeFixtures[name]};
       };
       await nativeFixture('gtkSignals','gtk-contracts.cpp',async executable=>{
-        assert.match(await execute(executable,[],{gtk:true}),/LINUX_GTK_NATIVE_SIGNALS_OK/);
+        // QEMU's GTK initialization alone can take over twenty seconds. Keep
+        // the real 1,025-level model and signal stress checks within a bounded
+        // emulation budget; native hardware retains the ordinary timeout.
+        assert.match(await execute(executable,[],{gtk:true,timeout:emulator?180000:60000}),/LINUX_GTK_NATIVE_SIGNALS_OK/);
       });
       report.gtkNativeSignalsVerified=true;
       report.checks.push('Native GTK signals and admitted widget types executed against the exact rebuilt SDK objects');
@@ -216,7 +221,7 @@ export async function testLinuxAOT({architecture='x64',rebuild=false,runtimeDire
     report[architecture+'ExecutionVerified']=true;report.machineCodeExecutionVerified=true;
     console.log('Linux native AOT acceptance passed.');
   }catch(error) {
-    report.error={message:error.message,output:error.output||'',stack:error.stack||''};
+    report.error={message:error.message,output:error.output||'',stack:error.stack||'',tool:error.tool,code:error.code,timeout:error.timeout,exitCode:error.exitCode};
     throw error;
   }finally {
     await fs.mkdir(reportDirectory,{recursive:true});
