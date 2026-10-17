@@ -13,7 +13,7 @@ import {linuxBrowserProject} from '../tests/linux-browser-fixture.mjs';
 import {compileLinuxAOT} from '../packages/linux-native/src/compiler.js';
 import {linkLinuxAOT,unpackLinuxAOTArchive} from '../packages/linux-native/src/aot-export.js';
 import {inspectLinuxELF,verifyLinuxAOTRuntime} from '../packages/linux-native/src/elf.js';
-import {buildLinuxAOTTemplate,linuxNativeTool} from './build-linux-aot-template.mjs';
+import {buildLinuxAOTTemplate,linuxNativeTool,verifyLinuxAOTExecutionSysroot} from './build-linux-aot-template.mjs';
 import {checkLinuxAOTRuntimeProvenance,readLinuxAOTSourceProvenance} from './linux-aot-provenance.mjs';
 import {linuxTarget} from '../packages/linux-native/src/target.js';
 import {qualifyLinuxPrinters} from '../packages/linux-native/tests/printer-contracts.mjs';
@@ -71,6 +71,7 @@ export async function testLinuxAOT({architecture='x64',rebuild=false,runtimeDire
     if(sysroot)sysroot=await fs.realpath(path.resolve(sysroot));
     if(process.arch!==architecture){
       if(!sysroot)throw new Error('Cross-architecture execution requires an explicit target sysroot.');
+      report.sysrootEnvironment=await verifyLinuxAOTExecutionSysroot(sysroot,{architecture});
       emulator=await linuxNativeTool(qemu||(architecture==='arm64'?'qemu-aarch64':'qemu-x86_64'));
       report.emulatorVersion=(await run(emulator,['--version'])).trim();
     }else if(qemu)throw new Error('Use native execution when the host already matches the requested architecture.');

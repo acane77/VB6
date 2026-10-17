@@ -33,6 +33,27 @@ export function parsePkgConfigFlags(value) {
   if(result.some(value=>value.includes('\0')))throw new Error('Invalid pkg-config output');
   return result;
 }
+/** Extracted .deb sysroots need the same caches that package postinst creates. */
+export async function verifyLinuxAOTExecutionSysroot(sysroot,{architecture='arm64'}={}) {
+  const target=linuxTarget(architecture),directory=await fs.realpath(path.resolve(sysroot));
+  const prefix='usr/lib/'+target.triple+'/gdk-pixbuf-2.0',cachePath=prefix+'/2.10.0/loaders.cache';
+  const prerequisites='Initialize target GTK image loaders before cross execution: install target libgdk-pixbuf-2.0-0 and librsvg2-common, run the target '+prefix+'/gdk-pixbuf-query-loaders under QEMU with -L SYSROOT and redirect its output to SYSROOT/'+cachePath+', then run update-mime-database SYSROOT/usr/share/mime. Native package installation normally creates these caches.';
+  let cache,mime;
+  try{cache=await fs.readFile(path.join(directory,cachePath));mime=await fs.readFile(path.join(directory,'usr/share/mime/mime.cache'));}
+  catch(error){if(error.code==='ENOENT')throw new Error('Missing cross-sysroot GdkPixbuf or MIME cache. '+prerequisites);throw error;}
+  if(!cache.length||!mime.length)throw new Error('Empty cross-sysroot GdkPixbuf or MIME cache. '+prerequisites);
+  for(const format of ['ico','svg']){
+    const name=new RegExp('^"([^"\\n]*libpixbufloader-'+format+'\\.so)"\\s*$','m').exec(cache.toString('utf8'))?.[1];
+    if(!name||!path.isAbsolute(name))throw new Error('Cross-sysroot image-loader cache lacks '+format.toUpperCase()+'. '+prerequisites);
+    const filename=name.startsWith(directory+path.sep)?path.resolve(name):path.resolve(directory,'.'+name);
+    if(!filename.startsWith(directory+path.sep))throw new Error('Cross-sysroot image-loader path escapes its root. '+prerequisites);
+    let bytes;try{bytes=await fs.readFile(filename);}catch(error){if(error.code==='ENOENT')throw new Error('Cross-sysroot image-loader cache names a missing '+format.toUpperCase()+' module. '+prerequisites);throw error;}
+    const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+    if(bytes.length<20||view.getUint32(0,true)!==0x464c457f||bytes[4]!==2||bytes[5]!==1||view.getUint16(18,true)!==target.machine)
+      throw new Error('Cross-sysroot '+format.toUpperCase()+' image loader has the wrong ELF architecture. '+prerequisites);
+  }
+  return {imageLoaders:['ico','svg'],gdkPixbufCacheSha256:hash(cache),mimeCacheSha256:hash(mime)};
+}
 export async function buildLinuxAOTTemplate({architecture='x64',out,cache=path.join(root,'.native-build/linux-aot'),jobs=3,compiler,sysroot,log=()=>{},signal}={}) {
   const target=linuxTarget(architecture),cross=process.arch!==target.option;
   if(process.platform!=='linux'||!['x64','arm64'].includes(process.arch))throw new Error('The Linux SDK runtime must be built on Linux x64 or ARM64.');

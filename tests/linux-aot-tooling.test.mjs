@@ -1,9 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import {readZip} from '../src/project/zip.js';
 import {compressedLinuxRuntimeArchive} from '../tools/embed-linux-aot-runtime.mjs';
 import {linuxAOTExecutionVerification,linuxAOTRuntimePayloadFile} from '../tools/linux-aot-provenance.mjs';
 import {linuxTarget} from '../packages/linux-native/src/target.js';
+import {verifyLinuxAOTExecutionSysroot} from '../tools/build-linux-aot-template.mjs';
 const cases=['language-O0','language-O1','language-O2','language-O3','abi-platform-O0','abi-platform-O1','abi-platform-O2','abi-platform-O3','resource-path-O2','program-roots-O2','abrupt-End-O2','form-lifetime-O2','large-O2','gtk-controls-O2','richtext-O2','compiled-printers-O3','compiled-instance-O3'];
 function fixture(architecture,executionMode){
   const target=linuxTarget(architecture),manifest={architecture:target.architecture,sha256:'a'.repeat(64)};
@@ -37,4 +41,19 @@ test('Embedding proof rejects wrong architecture, partial execution, missing cas
   for(const change of [p=>p.arch='x64',p=>p.architecture='x86_64',p=>p.runtime.sha256='c'.repeat(64),p=>p.optimizationLevelsVerified.pop(),p=>p.arm64ExecutionVerified=false,p=>p.machineCodeExecutionVerified=false,p=>p.gtkNativeSignalsVerified=false,p=>p.executionMode='native',p=>p.emulatorVersion='',p=>delete p['language-O3'],p=>p['gtk-controls-O2'].machine=62,p=>p['large-O2'].runtimeSha256='c'.repeat(64),p=>p.richTextVerified=false,p=>p.printerServicesVerified=false,p=>p.previousInstanceVerified=false,p=>delete p.nativeFixtures.richText,p=>p.nativeFixtures.printers.runtimeSha256='c'.repeat(64),p=>p.nativeFixtures.previousInstance.passed=false,p=>p.compiledServices.passed=false,p=>delete p['compiled-printers-O3'],p=>p.emulatedPageSizesVerified.pop(),p=>delete p.emulatedPageCases[16384],p=>p.emulatedPageCases[65536].executableSha256='c'.repeat(64),p=>p.error={message:'failed'}]){
     const {proof,manifest}=fixture('arm64','qemu-user');change(proof);assert.throws(()=>linuxAOTExecutionVerification(proof,manifest),/Embedding requires/);
   }
+});
+test('Cross GTK qualification requires initialized target image-loader and MIME caches',async()=>{
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'vb6-sysroot-prerequisites-'));
+  try{
+    await assert.rejects(()=>verifyLinuxAOTExecutionSysroot(directory),/gdk-pixbuf-query-loaders.*update-mime-database/);
+    const prefix='usr/lib/aarch64-linux-gnu/gdk-pixbuf-2.0/2.10.0',loaders=path.join(directory,prefix,'loaders');
+    await fs.mkdir(loaders,{recursive:true});await fs.mkdir(path.join(directory,'usr/share/mime'),{recursive:true});
+    const module=new Uint8Array(24),view=new DataView(module.buffer);view.setUint32(0,0x464c457f,true);module[4]=2;module[5]=1;view.setUint16(18,183,true);
+    for(const format of ['ico','svg'])await fs.writeFile(path.join(loaders,'libpixbufloader-'+format+'.so'),module);
+    await fs.writeFile(path.join(directory,prefix,'loaders.cache'),['ico','svg'].map(format=>'"/'+prefix+'/loaders/libpixbufloader-'+format+'.so"').join('\n')+'\n');
+    await fs.writeFile(path.join(directory,'usr/share/mime/mime.cache'),Uint8Array.of(1));
+    const verified=await verifyLinuxAOTExecutionSysroot(directory);assert.deepEqual(verified.imageLoaders,['ico','svg']);assert.match(verified.gdkPixbufCacheSha256,/^[a-f0-9]{64}$/);
+    view.setUint16(18,62,true);await fs.writeFile(path.join(loaders,'libpixbufloader-svg.so'),module);
+    await assert.rejects(()=>verifyLinuxAOTExecutionSysroot(directory),/SVG image loader has the wrong ELF architecture/);
+  }finally{await fs.rm(directory,{recursive:true,force:true});}
 });
