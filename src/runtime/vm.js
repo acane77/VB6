@@ -308,6 +308,7 @@ export class VirtualMachine extends Signal {
     if(this.instances.has(key))return this.instances.get(key);
     for(const instance of this.instances.values())if(instance.module.kind==='module'){
       if(instance.fields.has(key)&&instance.fields.get(key).scope!=='private')return readScalar(instance.fields.get(key));const proc=instance.module.procedures.get(key);if(proc&&proc.scope!=='private')return {__procedure:proc,instance};
+      if(instance!==frame.instance){const property=instance.module.procedures.get(key+':get');if(property&&property.scope!=='private')return property.params.length?{__procedure:property,instance}:await this.callProcedure(instance,property,[],frame,true);}
     }
     const intrinsicKey=String(name).endsWith('$')&&this.library.has(key+'$')?key+'$':key;
     if(this.library.has(intrinsicKey)){const value=this.library.get(intrinsicKey);return typeof value==='number'?tagScalar(value,value>=-32768&&value<=32767?'integer':'long'):tagScalar(value);}
