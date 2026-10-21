@@ -67,7 +67,8 @@ class AutomationSession {
   }
   adopt(adapter){
     if(this.closed)throw new VBError('Automation session closed',91);if(this.adapters.has(adapter))return this.adapters.get(adapter);
-    if(!adapter||typeof adapter.invoke!=='function'||typeof adapter.release!=='function'||!Array.isArray(adapter.metadata?.members)||adapter.metadata.members.length>1024||this.adapters.size>=128)throw new VBError('Invalid or excessive Automation adapter',440);
+    // A document model allocates a wrapper on each access. The session keeps those objects.
+    if(!adapter||typeof adapter.invoke!=='function'||typeof adapter.release!=='function'||!Array.isArray(adapter.metadata?.members)||adapter.metadata.members.length>1024||this.adapters.size>=8192)throw new VBError('Invalid or excessive Automation adapter',440);
     const members=new Map();for(const m of adapter.metadata.members){if(!nameOK(m.name)||members.has(m.name.toLowerCase())||!Array.isArray(m.modes)||!m.modes.length||m.modes.some(v=>![1,2,4,8].includes(v))||!Array.isArray(m.params)||m.params.length>64||m.params.some(p=>!nameOK(p.name)))throw new VBError('Invalid Automation member metadata',440);members.set(m.name.toLowerCase(),{name:m.name,modes:[...m.modes],params:m.params.map(p=>({name:p.name,byRef:!!p.byRef,optional:!!p.optional,type:'Variant'}))});}
     const defaultMember=adapter.metadata.defaultMember||null;if(defaultMember&&!members.has(String(defaultMember).toLowerCase()))throw new VBError('Invalid Automation default member',440);
     const events=new Map(),definitions=adapter.metadata.events||[];
