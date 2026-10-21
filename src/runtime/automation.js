@@ -6,7 +6,17 @@ const eventTypes=new Map(['Variant','Byte','Integer','Long','Single','Double','C
 const nameOK=n=>typeof n==='string'&&n.length<=255&&/^[A-Za-z][A-Za-z0-9_.]*$/.test(n)&&!['constructor','prototype','caller','callee','arguments'].includes(n.toLowerCase());
 export const isAutomationObject=o=>!!o&&objects.has(o);
 function state(o){const s=objects.get(o);if(!s||s.closed||s.session.closed)throw new VBError('Automation object has been released',91);return s;}
-function member(o,name,mode){const s=state(o),m=s.members.get(String(name).toLowerCase());if(!nameOK(name)||!m||mode&&!m.modes.includes(mode))throw new VBError('Automation member or invocation mode not supported: '+name,438);return {s,m};}
+function anyMember(s,name){
+  const meta=s.adapter.metadata;
+  if(!meta||!meta.acceptAnyMember||!nameOK(name))return null;
+  if(!meta._any){
+    const params=[];
+    for(let i=1;i<=16;i++)params.push({name:'Arg'+i,optional:true,byRef:false,type:'Variant'});
+    meta._any={modes:[1,2,4,8],params};
+  }
+  return {name:String(name),modes:meta._any.modes,params:meta._any.params};
+}
+function member(o,name,mode){const s=state(o);let m=s.members.get(String(name).toLowerCase());if(!m)m=anyMember(s,name);if(!nameOK(name)||!m||mode&&!m.modes.includes(mode))throw new VBError('Automation member or invocation mode not supported: '+name,438);return {s,m};}
 export function automationDefaultName(o){return state(o).defaultMember;}
 export async function automationInvoke(o,name,mode,args=[]){
   const {s,m}=member(o,name,mode);if(args.length>65)throw new VBError('Too many Automation arguments',450);
