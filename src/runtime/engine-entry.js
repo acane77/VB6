@@ -3,7 +3,7 @@
 import { compileProject } from '../language/compiler.js';
 import { VirtualMachine } from './vm.js';
 import { AutomationRegistry } from './automation.js';
-import { describe, unbox, NOTHING, MISSING } from './values.js';
+import { describe, unbox, NOTHING, MISSING, VBArray } from './values.js';
 import { VBError } from '../language/errors.js';
 
-export { compileProject, VirtualMachine, AutomationRegistry, describe, unbox, NOTHING, MISSING, VBError };
+export { compileProject, VirtualMachine, AutomationRegistry, describe, unbox, NOTHING, MISSING, VBError, VBArray };
